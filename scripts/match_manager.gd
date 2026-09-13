@@ -5,9 +5,10 @@ extends Node
 signal match_started(match_index: int)
 signal match_ended(result: Dictionary)
 signal celebration_finished(match_index: int)
+signal dance_started(match_index: int)
 
 const TEAM_SIZE := 5
-const MATCH_TIME := 150.0
+const MATCH_TIME := 150.0   # only the headless sims are capped (time_limit); a real match runs until a team is gone
 const ARENA_HALF := 20.0
 const ROCKS_PER_ROBOT := 0.5   # ~1 rock per 2 robots
 const TEAM_NAMES := ["Red", "Blue"]
@@ -15,11 +16,12 @@ const TEAM_COLORS := [Color(0.9, 0.3, 0.25), Color(0.25, 0.5, 0.95)]
 
 var world: Node3D
 var arena: Arena
-var team_personalities: Array[Personality] = [Personality.preset("Balanced"), Personality.preset("Balanced")]
-var team_preset_names: Array[String] = ["Balanced", "Balanced"]
+var team_personalities: Array[Personality] = [Personality.preset("Slinger"), Personality.preset("Brawler")]
+var team_preset_names: Array[String] = ["Slinger", "Brawler"]
 var robots: Array[Robot] = []
 var rocks: Array[Rock] = []
-var time_left := MATCH_TIME
+var time_left := INF
+var time_limit := -1.0  # <= 0: no limit
 var elapsed := 0.0
 var running := false
 var match_index := 0
@@ -44,7 +46,7 @@ func start_match(seed_value: int = -1) -> void:
 	else:
 		rng.seed = seed_value
 	match_index += 1
-	time_left = MATCH_TIME
+	time_left = time_limit if time_limit > 0.0 else INF
 	elapsed = 0.0
 	stats = _fresh_stats()
 	robot_stats = {}
@@ -131,6 +133,7 @@ func _fresh_stats() -> Dictionary:
 		"punch_hits": [0, 0],
 		"kills": [0, 0],
 		"friendly_fire": [0.0, 0.0],
+		"own_goals": [0, 0],
 		"knockdowns": [0, 0],
 		"hitbox_hist": {},   # hitboxes struck per rock hit -> count
 	}
@@ -273,6 +276,7 @@ func _run_celebration(delta: float) -> void:
 				celebration_phase = "dance"
 				_phase_timer = 0.0
 				dance_clock = 0.0
+				dance_started.emit(match_index)
 		"dance":
 			if _phase_timer >= Robot.DANCE_TIME:
 				celebration_phase = "teabag"
@@ -300,6 +304,8 @@ func _on_damaged(robot: Robot, amount: float, source: String, attacker: Robot, h
 	if robot.team == t:
 		stats["friendly_fire"][t] += amount
 		robot_stats[robot.robot_name]["dmg_taken"] += amount
+		if robot.hp <= 0.0 and robot.alive:
+			stats["own_goals"][t] += 1  # killed by a teammate's rock
 		return  # own goal: not credited as damage dealt
 	stats["damage"][t][source] += amount
 	robot_stats[robot.robot_name]["dmg_taken"] += amount
@@ -312,7 +318,7 @@ func _on_damaged(robot: Robot, amount: float, source: String, attacker: Robot, h
 		h[hitbox_count] = int(h.get(hitbox_count, 0)) + 1
 	else:
 		a["dmg_punch"] += amount
-	if robot.hp <= amount and robot.alive:
+	if robot.hp <= 0.0 and robot.alive:  # hp is already reduced; _die() follows this signal
 		a["kills"] += 1
 
 

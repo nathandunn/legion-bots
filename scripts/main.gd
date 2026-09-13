@@ -28,6 +28,7 @@ func _ready() -> void:
 	manager.arena = arena
 	manager.match_ended.connect(_on_match_ended)
 	manager.celebration_finished.connect(_on_celebration_finished)
+	manager.dance_started.connect(_on_celebration_finished)  # the stats come up as the dance starts
 	add_child(manager)
 
 	var args := _parse_args(OS.get_cmdline_user_args())
@@ -42,6 +43,7 @@ func _ready() -> void:
 		_base_seed = int(args["seed"])
 
 	if headless:
+		manager.time_limit = float(args.get("cap", "300"))  # sims can't wait forever; real matches do
 		set_sim_speed(20.0)
 		batch_left = maxi(int(args.get("sim", "5")), 1)
 		print("Rock Bots headless sim: %d matches, %s vs %s" % [batch_left, manager.team_preset_names[0], manager.team_preset_names[1]])

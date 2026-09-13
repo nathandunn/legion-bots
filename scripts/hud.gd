@@ -157,7 +157,7 @@ func _overlay(title_text: String) -> Array:
 	ov.add_child(center)
 	var panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
+	sb.bg_color = Color(0.08, 0.09, 0.12, 0.9)
 	sb.border_color = Color(0.35, 0.38, 0.45)
 	sb.set_border_width_all(1)
 	sb.set_corner_radius_all(8)
@@ -297,7 +297,20 @@ func _relayout() -> void:
 	var w := vs.x
 	var h := vs.y
 	teams_scroll.custom_minimum_size = Vector2(minf(820.0, w - 40.0), minf(470.0, h - 110.0))
-	results_scroll.custom_minimum_size = Vector2(minf(900.0, w - 40.0), minf(600.0, h - 110.0))
+	# results share the screen with the celebration: right half in landscape, lower part in portrait
+	var rc: Control = results_overlay.get_child(0)
+	if w > h:
+		rc.anchor_left = 0.5
+		rc.anchor_top = 0.0
+		rc.offset_left = 0.0
+		rc.offset_top = 96.0  # below the button rows
+		results_scroll.custom_minimum_size = Vector2(minf(620.0, w * 0.5 - 40.0), minf(560.0, h - 210.0))
+	else:
+		rc.anchor_left = 0.0
+		rc.anchor_top = 0.42
+		rc.offset_left = 0.0
+		rc.offset_top = 0.0
+		results_scroll.custom_minimum_size = Vector2(minf(900.0, w - 40.0), minf(600.0, h * 0.58 - 90.0))
 
 
 # ---------------------------------------------------------------- team setup
@@ -347,7 +360,7 @@ func _process(delta: float) -> void:
 	if _tick > 0.0 or manager == null:
 		return
 	_tick = 0.2
-	var tl := manager.time_left
+	var tl := manager.elapsed
 	timer_label.text = "%d:%02d" % [int(tl) / 60, int(tl) % 60]
 	for t in 2:
 		team_labels[t].text = "%s %d/%d  HP %d%%" % [MatchManager.TEAM_NAMES[t], manager.alive_count(t), MatchManager.TEAM_SIZE,
@@ -420,8 +433,9 @@ func show_result(res: Dictionary) -> void:
 		["Rock damage", func(t): return "%d" % int(s["damage"][t]["rock"])],
 		["Punch damage", func(t): return "%d" % int(s["damage"][t]["punch"])],
 		["Knockdowns dealt", func(t): return "%d" % s["knockdowns"][t]],
-		["Kills", func(t): return "%d" % s["kills"][t]],
+		["Kills (enemy dead)", func(t): return "%d" % s["kills"][t]],
 		["Friendly-fire damage", func(t): return "%d" % int(s["friendly_fire"][t])],
+		["Own goals (killed a mate)", func(t): return "%d" % int(s.get("own_goals", [0, 0])[t])],
 	]
 	for row in rows:
 		grid.add_child(_cell(row[0], false, Color(0.8, 0.8, 0.85)))
@@ -458,7 +472,7 @@ func show_result(res: Dictionary) -> void:
 
 	results_overlay.visible = true
 	results_scroll.scroll_vertical = 0
-	set_status("Match over. Start the next one with New match (or Teams / setup).")
+	set_status("Match over. Close the panel to watch; New match (or Teams / setup) when ready.")
 
 
 func show_batch(summary: Dictionary) -> void:

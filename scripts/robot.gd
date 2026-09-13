@@ -17,13 +17,14 @@ const PUNCH_KNOCKDOWN_CHANCE := 0.5 # at full quality; scales down with a glanci
 const PUNCH_KNOCKDOWN_TIME := 1.1
 const PUNCH_FLOP_TIME := 0.55       # a landed punch that doesn't floor you still sends you sprawling
 const ROCK_KNOCKDOWN_TIME := 1.8    # every rock hit floors you
-const DANCE_TIME := 10.0
+const DANCE_TIME := 2.0
 const TEABAG_PERIOD := 0.55        # one squat
 const TEABAG_REPS := 4             # squats per corpse
 const TEABAG_DEPTH := 0.62
 const RECOVER_GRACE := 0.4          # can't be floored again right after getting up
 const PUNCH_COOLDOWN := 0.6         # 4x faster than a throw
 const PUNCH_REACH := 1.7
+const PUNCH_WINDUP := 0.22          # seen coming: the wind-up before the fist lands
 const THROW_COOLDOWN := 2.4
 const THROW_RANGE := 20.0
 const PICKUP_RANGE := 1.5
@@ -60,6 +61,12 @@ var stuck_timer := 0.0
 var fetch_rock: Rock = null
 var _rock_notice := {}  # rock -> did we notice this throw (caution-based reaction)
 var _dodge_burst := 0.0
+var _detour_timer := 0.0        # unstick: hold a random heading for a while, whatever the brain says
+var _detour_dir := Vector3.ZERO
+var _prog_anchor := Vector3.ZERO
+var _prog_timer := 0.0
+var _flee_timer := 0.0          # coward hit-and-run: after a poke, run
+var _punch_pending := 0.0       # wind-up left before the current punch lands
 
 # victory celebration (driven by MatchManager.celebration_phase)
 var celebrating := false
@@ -282,6 +289,11 @@ func _physics_process(delta: float) -> void:
 		return
 	punch_timer -= delta
 	throw_timer -= delta
+	_flee_timer -= delta
+	if _punch_pending > 0.0:
+		_punch_pending -= delta
+		if _punch_pending <= 0.0 and down_timer <= 0.0 and (manager == null or manager.running):
+			_punch_land()
 	decide_timer -= delta
 	wander_timer -= delta
 	grace_timer -= delta
@@ -331,6 +343,10 @@ func _physics_process(delta: float) -> void:
 	# movement
 	var mv := move_dir
 	mv.y = 0.0
+	if _detour_timer > 0.0:
+		# stuck against a block or a body: hold a random heading until it clears, ignoring the brain
+		_detour_timer -= delta
+		mv = _detour_dir
 	if mv.length_squared() > 0.001:
 		mv = mv.normalized()
 	var speed_mult := 0.92 + 0.16 * personality.get_trait("aggression")
@@ -348,14 +364,26 @@ func _physics_process(delta: float) -> void:
 	var before := global_position
 	move_and_slide()
 	global_position.y = 0.0
-	# unstick: if we wanted to move but barely did, veer
-	if mv.length_squared() > 0.001 and before.distance_to(global_position) < SPEED * delta * 0.3:
+	# unstick, two ways. (a) pressed against something: barely moving while trying to.
+	# (b) inching back and forth behind a block: wanted to move for a second and a half and got nowhere.
+	# Either way pick a random heading (60-150 degrees off) and hold it for a random while.
+	var wanted := move_dir.length_squared() > 0.001
+	if wanted and _detour_timer <= 0.0 and before.distance_to(global_position) < SPEED * delta * 0.3:
 		stuck_timer += delta
 		if stuck_timer > 0.3:
-			move_dir = mv.rotated(Vector3.UP, rng.randf_range(0.8, 1.6) * (1.0 if rng.randf() < 0.5 else -1.0))
-			stuck_timer = 0.0
+			_start_detour(mv)
 	else:
 		stuck_timer = 0.0
+	if wanted:
+		_prog_timer += delta
+		if _prog_timer >= 1.5:
+			if _prog_anchor.distance_to(global_position) < 1.2 and _detour_timer <= 0.0 and action != "punch" and action != "throw":
+				_start_detour(mv)
+			_prog_anchor = global_position
+			_prog_timer = 0.0
+	else:
+		_prog_anchor = global_position
+		_prog_timer = 0.0
 
 	# facing
 	var fp := face_point if has_face_point else global_position + mv
@@ -366,7 +394,8 @@ func _physics_process(delta: float) -> void:
 	# arm swing anim
 	if _swing > 0.0:
 		_swing -= delta
-		arm_r.rotation.x = -1.6 * (_swing / 0.2)
+		# wind back during the wind-up, then snap forward
+		arm_r.rotation.x = (0.9 * (1.0 - (_swing - 0.2) / PUNCH_WINDUP)) if _swing > 0.2 else -1.6 * (_swing / 0.2)
 	else:
 		arm_r.rotation.x = 0.0
 
@@ -395,7 +424,37 @@ func _will_box(edist: float) -> bool:
 	if rock_love < 0.75 and caution < 0.8:
 		return true
 	var cornered := held_rock == null and _nearest_free_rock() == null and edist < 3.0
-	return cornered
+	if cornered or rock_love >= 0.75:
+		return cornered
+	# a coward never goes looking for fists, but with an enemy already in reach he swings:
+	# trapped (wall or block at his back) means fight it out; with an open escape it's one
+	# poke and then run (see _punch)
+	return edist <= PUNCH_REACH + 0.3
+
+
+## Is there room to run straight away from the nearest enemy - inside the arena and not into cover?
+func _escape_open() -> bool:
+	var e := _nearest_enemy()
+	if e == null:
+		return true
+	var away := global_position - e.global_position
+	away.y = 0.0
+	if away.length_squared() < 0.01:
+		return true
+	away = away.normalized()
+	var h: float = manager.ARENA_HALF - 1.5
+	var p := global_position + away * 3.0
+	if absf(p.x) > h or absf(p.z) > h:
+		return false
+	return _clear_line(global_position + Vector3(0, 0.9, 0), p + Vector3(0, 0.9, 0))
+
+
+## How close this robot likes to be before it lets fly: the aggressive walk in for a sure
+## shot, the cautious throw from as far as the arm allows.
+func _throw_dist() -> float:
+	var aggression := personality.get_trait("aggression")
+	var caution := personality.get_trait("caution")
+	return clampf(7.0 + 8.0 * (1.0 - aggression) + 6.0 * caution, 7.0, THROW_RANGE)
 
 
 ## Who to throw at: the nearest enemy that is on its feet and not behind cover.
@@ -410,6 +469,15 @@ func _throw_target() -> Robot:
 		var d := _flat_dist(r.global_position)
 		if d > THROW_RANGE:
 			continue
+		if d > _throw_dist() + 2.0:
+			# too far for a good shot - walk in first, unless he's running off (throw before he's gone)
+			var away_v: Vector3 = r.velocity
+			away_v.y = 0.0
+			var to_me := global_position - r.global_position
+			to_me.y = 0.0
+			var fleeing := away_v.length() > 2.0 and to_me.length_squared() > 0.01 and away_v.normalized().dot(to_me.normalized()) < -0.5
+			if not fleeing:
+				continue
 		var aim_y := 0.35 if r.down_timer > 0.0 else 1.1
 		if not _can_see(r.global_position + Vector3(0, aim_y, 0)):
 			continue  # can't aim at what you aren't looking at
@@ -647,6 +715,8 @@ func _decide() -> void:
 		if caution > 0.8 and edist < 5.0 and not _will_box(edist):
 			s3 += 0.5  # never get close
 		scores["kite"] = s3 * flee_sense
+		if _flee_timer > 0.0:
+			scores["kite"] = 2.5  # just poked someone: run
 	# regroup with the pack
 	scores["regroup"] = teamwork * clampf(cdist / 14.0, 0.0, 1.0) * 0.85
 	# idle / hold position
@@ -704,8 +774,8 @@ func _decide() -> void:
 			var to := enemy.global_position - global_position
 			to.y = 0.0
 			to = to.normalized()
-			if edist > THROW_RANGE * 0.85:
-				move_dir = to
+			if edist > _throw_dist():
+				move_dir = to  # closer for a better shot
 			elif edist < 5.0 + 6.0 * maxf(caution, survival if low else 0.0):
 				move_dir = _keep_in_arena(-to)
 			else:
@@ -728,15 +798,11 @@ func _decide() -> void:
 			to_c.y = 0.0
 			if to_c.length() > 3.0:
 				away = (away + to_c.normalized() * 0.6 * teamwork).normalized()
-			move_dir = _keep_in_arena(away)
-			face_point = enemy.global_position
-			has_face_point = true
+			move_dir = _keep_in_arena(away)  # run properly - face the way you're going
 		"retreat":
 			var away := global_position - enemy.global_position
 			away.y = 0.0
 			away = away.normalized()
-			face_point = enemy.global_position
-			has_face_point = true
 			var to_rock := Vector3.ZERO
 			if held_rock == null and rock != null and rdist < 18.0:
 				to_rock = rock.global_position - global_position
@@ -782,6 +848,16 @@ func _decide() -> void:
 			if enemy != null:
 				face_point = enemy.global_position
 				has_face_point = true
+
+
+func _start_detour(tried: Vector3) -> void:
+	var base := tried if tried.length_squared() > 0.001 else Vector3.FORWARD
+	var ang := rng.randf_range(1.05, 2.6) * (1.0 if rng.randf() < 0.5 else -1.0)
+	_detour_dir = _keep_in_arena(base.rotated(Vector3.UP, ang))
+	_detour_timer = rng.randf_range(0.5, 1.1)
+	stuck_timer = 0.0
+	_prog_anchor = global_position
+	_prog_timer = 0.0
 
 
 func _keep_in_arena(dir: Vector3) -> Vector3:
@@ -833,9 +909,18 @@ func _throw_at(target: Robot) -> void:
 	threw.emit(self)
 
 
+## A punch is two moments: the wind-up (the target can see it coming and try to get out of
+## the box) and the landing, when whatever is still in the fist box - and a roll against the
+## puncher's accuracy - decides whether it connects.
 func _punch() -> void:
 	punch_timer = PUNCH_COOLDOWN
-	_swing = 0.2
+	_swing = 0.2 + PUNCH_WINDUP
+	_punch_pending = PUNCH_WINDUP
+	for r in _in_fist():
+		r.notice_punch(self)
+
+
+func _in_fist() -> Dictionary:
 	var hits := {}
 	for a in fist.get_overlapping_areas():
 		if not a.has_meta("robot"):
@@ -844,8 +929,16 @@ func _punch() -> void:
 		if r == null or r == self or r.team == team or not r.alive:
 			continue
 		hits[r] = int(hits.get(r, 0)) + 1
+	return hits
+
+
+func _punch_land() -> void:
+	var accuracy := personality.get_trait("accuracy")
 	var landed := false
+	var hits := _in_fist()
 	for r in hits:
+		if rng.randf() > 0.55 + 0.45 * accuracy:
+			continue  # swung and missed
 		landed = true
 		var quality := minf(float(hits[r]), float(PUNCH_FULL_HITBOXES)) / float(PUNCH_FULL_HITBOXES)
 		r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality, "punch", self, hits[r])
@@ -858,6 +951,32 @@ func _punch() -> void:
 		var impulse: Vector3 = away * (10.0 + 26.0 * quality) + Vector3(0, 4.0 + 5.0 * quality, 0)
 		victim.knock_down(PUNCH_KNOCKDOWN_TIME if floored else PUNCH_FLOP_TIME, self, "punch", impulse)
 	punched.emit(self, landed)
+	if personality.get_trait("caution") >= 0.8 and _escape_open():
+		_flee_timer = 1.6  # hit and run (a trapped coward stays and fights)
+		decide_timer = 0.0
+
+
+## Someone in front of me has started a swing. If I can see him and my nerves are quick
+## enough (caution), I skip sideways out of the fist box before it lands.
+func notice_punch(attacker: Robot) -> void:
+	if not alive or down_timer > 0.0 or attacker == null:
+		return
+	if not _can_see(attacker.global_position + Vector3(0, 1.2, 0)):
+		return
+	var caution := personality.get_trait("caution")
+	if rng.randf() > 0.15 + 0.6 * caution:
+		return
+	var from := global_position - attacker.global_position
+	from.y = 0.0
+	if from.length_squared() < 0.01:
+		return
+	var side := from.normalized().cross(Vector3.UP) * (1.0 if rng.randf() < 0.5 else -1.0)
+	move_dir = _keep_in_arena((side * 1.0 + from.normalized() * 0.35).normalized())
+	_dodge_burst = PUNCH_WINDUP + 0.15
+	decide_timer = PUNCH_WINDUP + 0.15  # hold the sidestep until the swing has gone by
+	action = "dodge"
+	has_face_point = true
+	face_point = attacker.global_position
 
 
 func take_damage(amount: float, source: String, attacker: Robot, hitbox_count: int) -> void:

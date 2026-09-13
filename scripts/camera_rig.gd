@@ -1,12 +1,12 @@
 class_name CameraRig
 extends Node3D
-## Orbit camera: drag to rotate (mouse or touch), wheel/pinch to zoom, slow auto-orbit when idle.
+## Orbit camera: drag to rotate (mouse or touch), wheel/pinch to zoom. It does not move on its own.
 
 var yaw := 0.6
 var pitch := 0.5
 var dist := 27.0
 var idle := 0.0
-var auto_orbit := true
+var auto_orbit := false  # the view stays where you put it
 var _cam: Camera3D
 var _dragging := false
 var _touches := {}
@@ -16,6 +16,7 @@ var _pinch_d := 0.0
 var _focus := Vector3(0, 1.0, 0)
 var _focus_target := Vector3(0, 1.0, 0)
 var _focus_dist := -1.0
+var _rest_dist := 27.0  # the zoom the user last chose; the view returns to it after a celebration
 
 
 func _ready() -> void:
@@ -45,7 +46,7 @@ func set_focus(point: Vector3, want_dist: float = -1.0) -> void:
 
 func clear_focus() -> void:
 	_focus_target = Vector3(0, 1.0, 0)
-	_focus_dist = -1.0
+	_focus_dist = _rest_dist if absf(dist - _rest_dist) > 0.5 else -1.0
 
 
 func _apply() -> void:
@@ -62,9 +63,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			_dragging = event.pressed
 		elif event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			dist *= 0.9
+			_rest_dist = clampf(dist, 10.0, 70.0)
 			idle = 0.0
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			dist *= 1.1
+			_rest_dist = clampf(dist, 10.0, 70.0)
 			idle = 0.0
 	elif event is InputEventMouseMotion and _dragging:
 		yaw -= event.relative.x * 0.006
@@ -88,5 +91,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			var d: float = pts[0].distance_to(pts[1])
 			if _pinch_d > 0.0:
 				dist *= _pinch_d / maxf(d, 1.0)
+				_rest_dist = clampf(dist, 10.0, 70.0)
 			_pinch_d = d
 		idle = 0.0

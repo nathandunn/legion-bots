@@ -9,13 +9,13 @@ Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
 
 | thing | value |
 |---|---|
-| teams | 5 v 5, last team standing, 150 s cap (most total HP wins on time) |
+| teams | 5 v 5, last team standing, **no clock** — stop it yourself if you tire of it (headless sims are capped at `--cap=300` s) |
 | robot speed | 6 m/s (±8 % by aggression); backpedalling (moving away from what you face) is 22 % slower, so chasers catch fleers |
 | rock speed | 18 m/s (3× robot), ~20 m range, lofted flight |
 | rocks | 5 on the field (1 per 2 robots), scattered, reusable — thrown rocks land and can be picked up again. Three sizes (1.2 / 2 / 3.2 kg); heavier ones leave the hand slower but carry more momentum |
 | hitboxes | head, torso, 2 arms, 2 legs. Hit quality = parts struck / "full" parts |
 | rock hit | physics decides: damage = 50 % of max HP × parts-struck quality × (kinetic energy of the rock **relative to the robot** / a full-speed 2 kg throw). Walking into a rock hurts more than being clipped while running with it. **Friendly fire is on.** Knockdown impulse is the rock's momentum; down time 0.7–2 s by energy |
-| punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. Every landed punch sends the target sprawling as a ragdoll (0.55 s); with **chance 50 % × hit quality** it's a proper floor (1.1 s) |
+| punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. A punch has a 0.22 s wind-up: a target who can see it coming sidesteps with chance 0.15 + 0.6·caution, and the swing itself lands with chance 0.55 + 0.45·accuracy. Every landed punch sends the target sprawling as a ragdoll (0.55 s); with **chance 50 % × hit quality** it's a proper floor (1.1 s) |
 | knockdown | the robot becomes a **ragdoll** (six pinned rigid bodies) and gets shoved away from the hit; it can't act, and its hitboxes drop below the fist box so it can't be punched while down; 0.4 s grace after getting up. Dead robots stay ragdolls |
 | HP | 200, shown as a bar over each robot (green → red) |
 | eyes | robots see ~190° in front of them and not through cover. A rock they can see coming is spotted 92 % of the time, and after 0.08–0.28 s (quicker when cautious) they drop everything and sprint out of its path; a rock from behind or over a block is never seen. Throws need the target in view too |
@@ -31,13 +31,19 @@ Each robot gets the team personality ±0.08 jitter so a team isn't five clones.
 
 Doctrine that falls out of the traits:
 - **Slinger** (`rock_love` ≥ 0.75) never punches unless cornered (no rock in hand, none to fetch,
-  enemy within 3 m); throws, then sprints for the next rock.
+  enemy within 3 m); walks in to its preferred throwing distance (`7 + 8·(1−aggression) + 6·caution` m,
+  ~13 m for a Slinger) for a better shot, throws, then sprints for the next rock. Anyone will throw
+  early at a target that is running away.
 - **Coward** (`caution` ≥ 0.8) never closes in: hides behind cover when an enemy is holding a rock,
-  backs off when someone is coming at it, throws only when armed and far away, punches only when cornered.
+  runs (properly — facing the way it's going, not backwards) when someone comes at it, throws only when
+  armed and far away. Fists only when an enemy is already in reach: trapped against a wall or block it
+  fights; with an open escape it's one poke and then run.
+- Stuck behind a block or a body (pressed against it, or inching back and forth for 1.5 s without
+  getting anywhere) → a random heading 60–150° off, held for 0.5–1.1 s.
 - Throws pick the nearest enemy that is standing and has a clear line (raycast against cover); a floored
   enemy is aimed at low and only if nobody is up.
 - Seeing an incoming rock beats every other urge: the dodge is a sideways sprint (with a step back if there is time and the robot is cautious).
-- The winning team jogs to a line in front of the centre block, dances for ten seconds — hips, arms and a slow turn, all on one shared beat — then shares out the fallen enemies and squats over each of them four times. Then the results panel opens.
+- The winning team jogs to a line in front of the centre block, dances for two seconds on one shared beat, then shares out the fallen enemies and squats over each of them four times. The results panel opens as the dance starts, off to one side (right half in landscape, lower part in portrait) so you can watch; Close it to see everything.
 
 The brain (`Robot._decide`) is a small utility AI: every 0.15 s it scores
 `dodge / fetch / throw / punch / kite / retreat / regroup / wander` from traits + situation and takes the best
@@ -46,16 +52,18 @@ the cooldown is up.
 
 ## Controls
 
-- Drag to orbit, wheel / pinch to zoom. Camera auto-orbits when idle.
+- Drag to orbit, wheel / pinch to zoom. The camera stays where you put it (it glides in on the winners
+  during the celebration and back out afterwards).
 - `Pause` / `Play`, then `1x 2x 4x 8x` — sim speed (raises the physics tick rate to match, so fast mode is not sloppier).
 - `Teams / setup` — preset + sliders per team, then `Start match with these teams`.
 - `Live list` — per-robot HP / current action. `Last results` reopens the last match's results.
 - `New match`, `Batch x10` — batch runs at 8× and prints win rates, damage by source, throw/punch accuracy,
   knockdowns and a histogram of hitboxes-struck-per-rock-hit.
-- Nothing starts by itself: after the celebration the results panel asks *Start the next match?* —
-  same teams, change teams first, or not yet. The camera follows the winners while they celebrate.
+- Nothing starts by itself: the results panel asks *Start the next match?* — same teams, change teams
+  first, or not yet. Default teams: Slinger vs Brawler.
 - At the end of a match a results panel shows team totals (throws/hits %, punches/hits %, damage by
-  source, knockdowns, kills) and a per-robot table (damage by source, accuracy, knockdowns, kills, HP).
+  source, knockdowns, kills — a team's kills equal the enemies it killed; a robot's kills are the ones
+  its own hands or rocks finished, own goals listed separately) and a per-robot table.
   The UI scales with device pixel density and wraps for phones.
 
 ## Headless simulation
