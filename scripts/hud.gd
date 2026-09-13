@@ -8,7 +8,7 @@ signal batch_requested(n: int)
 signal speed_changed(scale: float)
 signal pause_toggled(paused: bool)
 
-const PRESET_LIST := ["Balanced", "Brawler", "Slinger", "Coward", "Tactician", "Random", "Custom"]
+const PRESET_LIST := ["Balanced", "Brawler", "Slinger", "Coward", "Tactician", "Guardian", "Random", "Custom"]
 
 var manager: MatchManager
 var timer_label: Label

@@ -484,6 +484,13 @@ func _throw_target() -> Robot:
 		if not _clear_line(origin, r.global_position + Vector3(0, aim_y, 0)):
 			continue
 		var cost := d + (12.0 if r.down_timer > 0.0 else 0.0)
+		# the protective aim first at an enemy who is on one of ours
+		var protect := personality.get_trait("protect")
+		if protect > 0.05:
+			for m: Robot in manager.alive_robots():
+				if m.team == team and m != self and m._flat_dist(r.global_position) < 4.5:
+					cost -= 10.0 * protect
+					break
 		if cost < best_cost:
 			best_cost = cost
 			best = r
@@ -549,6 +556,42 @@ func _nearest_enemy() -> Robot:
 		if d < bd:
 			bd = d
 			best = r
+	return best
+
+
+## A mate in trouble: floored, or with an enemy at his throat. Returns {mate, enemy, urgency} or {}.
+## Urgency grows as the mate's HP falls and when he is down; nothing if he is far away.
+func _mate_in_trouble() -> Dictionary:
+	var best := {}
+	var best_u := 0.0
+	for m: Robot in manager.alive_robots():
+		if m.team != team or m == self:
+			continue
+		var md := _flat_dist(m.global_position)
+		if md > 24.0:
+			continue
+		var foe: Robot = null
+		var fd := INF
+		for e: Robot in manager.alive_robots():
+			if e.team == team or e.down_timer > 0.0:
+				continue
+			var d := m._flat_dist(e.global_position)
+			if d < fd:
+				fd = d
+				foe = e
+		if foe == null:
+			continue
+		var reach := 6.5 if m.down_timer > 0.0 else 4.0
+		if fd > reach:
+			continue
+		var u := (1.0 - fd / reach) * 0.6 + 0.4
+		u *= 0.7 + 0.6 * (1.0 - m.hp / MAX_HP)
+		if m.down_timer > 0.0:
+			u *= 1.4
+		u *= clampf(1.3 - md / 24.0, 0.3, 1.0)
+		if u > best_u:
+			best_u = u
+			best = {"mate": m, "enemy": foe, "urgency": u}
 	return best
 
 
@@ -633,6 +676,7 @@ func _decide() -> void:
 	var teamwork := P.get_trait("teamwork")
 	var patience := P.get_trait("patience")
 	var survival := P.get_trait("survival")
+	var protect := P.get_trait("protect")
 
 	var enemy := _nearest_enemy()
 	var edist := _flat_dist(enemy.global_position) if enemy != null else INF
@@ -717,6 +761,15 @@ func _decide() -> void:
 		scores["kite"] = s3 * flee_sense
 		if _flee_timer > 0.0:
 			scores["kite"] = 2.5  # just poked someone: run
+	# guard a mate who has someone on him: get between them and deal with the attacker
+	var trouble := _mate_in_trouble() if protect > 0.05 else {}
+	if not trouble.is_empty():
+		var sg: float = 0.15 + protect * 1.5 * trouble["urgency"]
+		if hpf < 0.25:
+			sg *= 0.5  # not much use to anyone half dead
+		if not _will_box(edist):
+			sg *= 0.45 if held_rock != null else 0.2  # the non-boxers guard with rocks, not fists
+		scores["guard"] = sg
 	# regroup with the pack
 	scores["regroup"] = teamwork * clampf(cdist / 14.0, 0.0, 1.0) * 0.85
 	# idle / hold position
@@ -831,6 +884,35 @@ func _decide() -> void:
 			var to := hide_spot - global_position
 			to.y = 0.0
 			move_dir = to.normalized() if to.length() > 0.8 else Vector3.ZERO
+		"guard":
+			var mate: Robot = trouble["mate"]
+			var foe: Robot = trouble["enemy"]
+			face_point = foe.global_position
+			has_face_point = true
+			var fd := _flat_dist(foe.global_position)
+			if held_rock != null and throw_timer <= 0.0 and fd > 3.0 and fd <= THROW_RANGE and _can_see(foe.global_position + Vector3(0, 1.1, 0)):
+				_throw_at(foe)  # the attacker gets the rock, whoever is nearer
+			if _will_box(fd):
+				# stand between the attacker and the mate, then close and hit
+				var between: Vector3 = mate.global_position + (foe.global_position - mate.global_position).normalized() * 1.3
+				between.y = 0.0
+				var target: Vector3 = foe.global_position if fd < 4.0 else between
+				var to := target - global_position
+				to.y = 0.0
+				move_dir = to.normalized() if to.length() > 0.6 else Vector3.ZERO
+				if fd <= PUNCH_REACH and punch_timer <= 0.0:
+					_punch()
+			else:
+				# keep at throwing distance from the attacker, on the mate's side
+				var to := foe.global_position - global_position
+				to.y = 0.0
+				to = to.normalized()
+				if fd > _throw_dist():
+					move_dir = to
+				elif fd < 6.0:
+					move_dir = _keep_in_arena(-to)
+				else:
+					move_dir = Vector3.ZERO
 		"regroup":
 			var to := centroid - global_position
 			to.y = 0.0

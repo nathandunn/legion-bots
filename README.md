@@ -24,9 +24,12 @@ All of these are `const`s at the top of `scripts/robot.gd` and `scripts/rock.gd`
 
 ## Personalities
 
-Seven 0–1 traits (`scripts/personality.gd`): `aggression`, `caution`, `rock_love`, `accuracy`,
+Eight 0–1 traits (`scripts/personality.gd`): `aggression`, `caution`, `rock_love`, `accuracy`,
 `teamwork`, `patience`, `survival` (when hurt: back off, grab a rock on the way, throw from range —
-fades when the enemy is far, worse off than you, or the clock is running out). Presets: Brawler, Slinger, Coward, Tactician, Balanced, Random.
+fades when the enemy is far or worse off than you), `protect` (guard your mates: when one is floored or
+has an enemy within 4 m, go and get between them and hit the attacker — or, if you don't box, keep
+throwing distance and put your rocks into the attacker; throws favour whoever is on a mate; fades when
+you're nearly dead yourself). Presets: Brawler, Slinger, Coward, Tactician, Guardian, Balanced, Random.
 Each robot gets the team personality ±0.08 jitter so a team isn't five clones.
 
 Doctrine that falls out of the traits:
