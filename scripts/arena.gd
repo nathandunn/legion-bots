@@ -55,6 +55,29 @@ func _ready() -> void:
 		cover_rects.append(Rect2(c[0] - c[2] * 0.5 - 0.8, c[1] - c[3] * 0.5 - 0.8, c[2] + 1.6, c[3] + 1.6))
 
 
+## Where to stand so that this cover block sits between you and the threat: the block's
+## centre pushed away from the threat by its radius plus a body's width.
+func hide_spot(from: Vector3, threat: Vector3) -> Vector3:
+	var best := from
+	var best_cost := INF
+	for c in COVER:
+		var centre := Vector3(c[0], 0.0, c[1])
+		var radius := maxf(c[2], c[3]) * 0.5 + 1.0
+		var away := centre - threat
+		away.y = 0.0
+		if away.length_squared() < 0.01:
+			continue
+		var spot := centre + away.normalized() * radius
+		# don't pick a block that means running through the threat to reach it
+		var cost := from.distance_to(spot) + (8.0 if spot.distance_to(threat) < from.distance_to(threat) - 2.0 else 0.0)
+		if cost < best_cost:
+			best_cost = cost
+			best = spot
+	best.x = clampf(best.x, -HALF + 1.5, HALF - 1.5)
+	best.z = clampf(best.z, -HALF + 1.5, HALF - 1.5)
+	return best
+
+
 func is_clear(x: float, z: float) -> bool:
 	for r in cover_rects:
 		if r.has_point(Vector2(x, z)):

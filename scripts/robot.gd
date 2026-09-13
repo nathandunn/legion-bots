@@ -57,6 +57,13 @@ var hitboxes: Array[Area3D] = []
 var fist: Area3D
 var body_root: Node3D
 var arm_r: MeshInstance3D
+var arm_l: MeshInstance3D
+var _dark_mat: StandardMaterial3D
+var _eye_mat: StandardMaterial3D
+var ragdoll: Ragdoll = null
+var cheer_timer := 0.0
+var _cheer_phase := 0.0
+var hide_spot := Vector3.ZERO
 var label: Label3D
 var _swing := 0.0
 var _mat: StandardMaterial3D
@@ -106,11 +113,12 @@ func _build_body() -> void:
 	var dark := StandardMaterial3D.new()
 	dark.albedo_color = team_color.darkened(0.45)
 	dark.roughness = 0.8
+	_dark_mat = dark
 
 	# name, mesh, shape, position, material
 	_part("torso", _box(Vector3(0.6, 0.7, 0.35)), _box_shape(Vector3(0.6, 0.7, 0.35)), Vector3(0, 1.15, 0), _mat)
 	_part("head", _box(Vector3(0.36, 0.34, 0.36)), _box_shape(Vector3(0.4, 0.38, 0.4)), Vector3(0, 1.75, 0), _mat)
-	_part("arm_l", _capsule(0.1, 0.62), _capsule_shape(0.12, 0.66), Vector3(-0.42, 1.2, 0), dark)
+	arm_l = _part("arm_l", _capsule(0.1, 0.62), _capsule_shape(0.12, 0.66), Vector3(-0.42, 1.2, 0), dark)
 	arm_r = _part("arm_r", _capsule(0.1, 0.62), _capsule_shape(0.12, 0.66), Vector3(0.42, 1.2, 0), dark)
 	_part("leg_l", _capsule(0.12, 0.76), _capsule_shape(0.14, 0.8), Vector3(-0.17, 0.4, 0), dark)
 	_part("leg_r", _capsule(0.12, 0.76), _capsule_shape(0.14, 0.8), Vector3(0.17, 0.4, 0), dark)
@@ -123,6 +131,7 @@ func _build_body() -> void:
 	em.emission_enabled = true
 	em.emission = Color(0.2, 1.0, 0.9)
 	eye.material_override = em
+	_eye_mat = em
 	eye.position = Vector3(0, 1.78, -0.19)
 	body_root.add_child(eye)
 
@@ -257,11 +266,30 @@ func _physics_process(delta: float) -> void:
 	decide_timer -= delta
 	wander_timer -= delta
 	grace_timer -= delta
+	if manager != null and not manager.running:
+		# match over: stand still; winners cheer for a couple of seconds
+		velocity = Vector3.ZERO
+		move_dir = Vector3.ZERO
+		if cheer_timer > 0.0:
+			cheer_timer -= delta
+			_cheer_phase += delta * 12.0
+			body_root.position.y = absf(sin(_cheer_phase)) * 0.35
+			var wave := -PI + sin(_cheer_phase * 0.7) * 0.4
+			arm_l.rotation.x = wave
+			arm_r.rotation.x = wave
+			if cheer_timer <= 0.0:
+				body_root.position.y = 0.0
+				arm_l.rotation.x = 0.0
+				arm_r.rotation.x = 0.0
+		if ragdoll != null and down_timer > 0.0:
+			_follow_ragdoll()
+		return
 	if down_timer > 0.0:
 		down_timer -= delta
 		velocity = Vector3.ZERO
+		_follow_ragdoll()
 		if held_rock != null:
-			held_rock.global_position = to_global(Vector3(0.6, 0.3, 0.2))
+			held_rock.global_position = global_position + Vector3(0.6, 0.3, 0.2)
 		if down_timer <= 0.0:
 			_get_up()
 		return
@@ -311,16 +339,48 @@ func _physics_process(delta: float) -> void:
 	if held_rock != null:
 		held_rock.global_position = to_global(HAND_POS)
 
-	# opportunistic punch: anyone in reach and fist ready
+	# opportunistic punch: anyone in reach and fist ready - unless this robot doesn't box
 	if manager != null and (punch_timer <= 0.0 or (held_rock != null and throw_timer <= 0.0)):
 		var e := _nearest_enemy()
 		if e != null:
 			var ed := _flat_dist(e.global_position)
-			if punch_timer <= 0.0 and ed <= PUNCH_REACH + 0.2:
+			if punch_timer <= 0.0 and ed <= PUNCH_REACH + 0.2 and _will_box(ed):
 				_punch()
 			# opportunistic throw: arm is ready and someone is in range - fling it, whatever we were doing
 			if held_rock != null and throw_timer <= 0.0 and ed <= THROW_RANGE and action != "dodge":
 				_throw_at(e)
+
+
+## Slingers don't box and cowards don't close in - unless there's no other choice
+## (no rock in hand, none to fetch, enemy right on top of them).
+func _will_box(edist: float) -> bool:
+	var rock_love := personality.get_trait("rock_love")
+	var caution := personality.get_trait("caution")
+	if rock_love < 0.75 and caution < 0.8:
+		return true
+	var cornered := held_rock == null and _nearest_free_rock() == null and edist < 3.0
+	return cornered
+
+
+func _follow_ragdoll() -> void:
+	if ragdoll == null:
+		return
+	var p := ragdoll.torso_position()
+	var h: float = manager.ARENA_HALF - 1.0 if manager != null else 19.0
+	global_position = Vector3(clampf(p.x, -h, h), 0.0, clampf(p.z, -h, h))
+
+
+func _nearest_armed_enemy() -> Robot:
+	var best: Robot = null
+	var bd := INF
+	for r: Robot in manager.alive_robots():
+		if r.team == team or r == self or r.held_rock == null:
+			continue
+		var d := _flat_dist(r.global_position)
+		if d < bd:
+			bd = d
+			best = r
+	return best
 
 
 # ---------------------------------------------------------------- perception helpers
@@ -451,6 +511,8 @@ func _decide() -> void:
 	# go get a rock
 	if rock != null:
 		scores["fetch"] = 0.12 + rock_love * clampf(1.0 - rdist / 30.0, 0.15, 1.0) * (1.2 if enemy == null or edist > 6.0 else 0.5)
+		if rock_love >= 0.75:
+			scores["fetch"] += 0.5 * rock_love  # a slinger's whole game: throw, then run for the next rock
 		if rdist < 3.5:
 			scores["fetch"] += 0.35 * rock_love  # it's right there, grab it
 		if low:
@@ -466,12 +528,23 @@ func _decide() -> void:
 		scores["throw"] = s
 	# close the gap and punch
 	if enemy != null:
-		var s2 := aggression * (1.0 - rock_love * 0.55) * clampf(1.0 - edist / 40.0, 0.25, 1.0) + 0.1
+		var s2 := aggression * (1.0 - rock_love * 0.55) * (1.0 - caution * 0.6) * clampf(1.0 - edist / 40.0, 0.25, 1.0) + 0.1
 		if edist < 3.5:
 			s2 += 0.35
 		if held_rock == null and rock == null:
 			s2 += 0.25  # nothing else to do
+		if not _will_box(edist):
+			s2 = 0.05  # slingers and cowards keep their fists to themselves
 		scores["punch"] = s2
+	# hide behind cover from an enemy who is holding a rock (cowards, mostly)
+	var armed := _nearest_armed_enemy() if caution > 0.5 else null
+	if armed != null and manager.arena != null:
+		var ad := _flat_dist(armed.global_position)
+		if ad < 26.0:
+			var sh := caution * 1.1 * clampf(1.0 - ad / 30.0, 0.3, 1.0)
+			if held_rock != null and ad > 10.0:
+				sh *= 0.5  # armed and far: throwing is the better answer
+			scores["hide"] = sh
 	# run away
 	if enemy != null:
 		var s3 := caution * (1.0 - hpf) * 1.3
@@ -479,6 +552,12 @@ func _decide() -> void:
 			s3 += 0.4  # kite while the arm recharges
 		if held_rock == null and rock == null and edist < 6.0:
 			s3 += caution * 0.4
+		# someone is coming at us: the cautious back off before it gets to fists
+		var closing := enemy.velocity.length() > 1.0 and enemy.velocity.normalized().dot((global_position - enemy.global_position).normalized()) > 0.5
+		if closing and edist < 9.0:
+			s3 += caution * clampf(1.0 - edist / 9.0, 0.0, 1.0) * 1.2
+		if caution > 0.8 and edist < 5.0 and not _will_box(edist):
+			s3 += 0.5  # never get close
 		scores["kite"] = s3 * flee_sense
 	# regroup with the pack
 	scores["regroup"] = teamwork * clampf(cdist / 14.0, 0.0, 1.0) * 0.85
@@ -579,6 +658,15 @@ func _decide() -> void:
 				if to_c.length() > 3.0:
 					away = (away + to_c.normalized() * 0.5 * teamwork).normalized()
 				move_dir = _keep_in_arena(away)
+		"hide":
+			var armed_e := _nearest_armed_enemy()
+			if armed_e != null:
+				hide_spot = manager.arena.hide_spot(global_position, armed_e.global_position)
+				face_point = armed_e.global_position
+				has_face_point = true
+			var to := hide_spot - global_position
+			to.y = 0.0
+			move_dir = to.normalized() if to.length() > 0.8 else Vector3.ZERO
 		"regroup":
 			var to := centroid - global_position
 			to.y = 0.0
@@ -642,6 +730,7 @@ func _throw_at(target: Robot) -> void:
 	rock.launch(origin, dir * Rock.SPEED, self)
 	throw_timer = THROW_COOLDOWN
 	_swing = 0.2
+	decide_timer = 0.0
 	threw.emit(self)
 
 
@@ -685,13 +774,33 @@ func knock_down(duration: float, by: Robot, source: String) -> void:
 	down_timer = maxf(down_timer, duration)
 	action = "down"
 	move_dir = Vector3.ZERO
+	var shove := Vector3(0, 1, 0) * 8.0
+	if by != null:
+		var away := global_position - by.global_position
+		away.y = 0.0
+		if away.length_squared() > 0.01:
+			shove += away.normalized() * (45.0 if source == "rock" else 22.0)
 	if was_up:
+		_spawn_ragdoll()
+		# hitboxes ride the (now invisible) rig so a floored robot is still below the fist box
 		if _body_tween != null and _body_tween.is_valid():
 			_body_tween.kill()
-		_body_tween = create_tween().set_parallel(true)
-		_body_tween.tween_property(body_root, "rotation:x", -PI * 0.5, 0.15).set_ease(Tween.EASE_IN)
-		_body_tween.tween_property(body_root, "position:y", 0.35, 0.15)
+		body_root.rotation.x = -PI * 0.5
+		body_root.position.y = 0.35
 		knocked_down.emit(self, by, source)
+	if ragdoll != null:
+		ragdoll.shove(shove)
+
+
+func _spawn_ragdoll() -> void:
+	if ragdoll != null or manager == null or manager.world == null:
+		return
+	ragdoll = Ragdoll.new()
+	manager.world.add_child(ragdoll)
+	var pose := global_transform
+	pose.origin.y = 0.0
+	ragdoll.build(pose, _mat, _dark_mat, _eye_mat)
+	body_root.visible = false
 
 
 func _get_up() -> void:
@@ -699,11 +808,30 @@ func _get_up() -> void:
 	grace_timer = RECOVER_GRACE
 	action = "wander"
 	decide_timer = 0.1
+	if ragdoll != null:
+		_follow_ragdoll()
+		ragdoll.queue_free()
+		ragdoll = null
+	body_root.visible = true
 	if _body_tween != null and _body_tween.is_valid():
 		_body_tween.kill()
+	body_root.rotation.x = -PI * 0.5
+	body_root.position.y = 0.35
 	_body_tween = create_tween().set_parallel(true)
 	_body_tween.tween_property(body_root, "rotation:x", 0.0, 0.3)
 	_body_tween.tween_property(body_root, "position:y", 0.0, 0.3)
+
+
+func cheer() -> void:
+	if alive and down_timer <= 0.0:
+		cheer_timer = 2.0
+		_cheer_phase = rng.randf_range(0.0, TAU)
+
+
+func cleanup() -> void:
+	if ragdoll != null and is_instance_valid(ragdoll):
+		ragdoll.queue_free()
+		ragdoll = null
 
 
 func _flash() -> void:
@@ -735,9 +863,18 @@ func _die() -> void:
 		_body_tween.kill()
 	body_root.rotation.x = -PI * 0.5
 	body_root.position.y = 0.35
+	_spawn_ragdoll()
+	if ragdoll != null:
+		ragdoll.shove(Vector3(rng.randf_range(-6, 6), 10.0, rng.randf_range(-6, 6)))
 	if _flash_tween != null and _flash_tween.is_valid():
 		_flash_tween.kill()
 	_mat.albedo_color = team_color.darkened(0.6)
 	set_physics_process(false)
 	_update_label()
 	died.emit(self)
+
+
+func _process(_delta: float) -> void:
+	# dead: keep the name tag over the corpse while it settles
+	if not alive and ragdoll != null and is_instance_valid(ragdoll):
+		_follow_ragdoll()

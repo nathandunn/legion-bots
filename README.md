@@ -16,7 +16,7 @@ Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
 | hitboxes | head, torso, 2 arms, 2 legs. Hit quality = parts struck / "full" parts |
 | rock hit | up to **50 % of max HP** for a direct hit (4+ parts within the 0.78 m splash); 1 part = 12.5 %. **Always knocks the robot down** (1.8 s) |
 | punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. **Knockdown chance 50 % × hit quality** (1.1 s) |
-| knockdown | robot drops flat, can't act; 0.4 s grace after getting up. A flat robot is below the fist box, so it can't be punched while down |
+| knockdown | the robot becomes a **ragdoll** (six pinned rigid bodies) and gets shoved away from the hit; it can't act, and its hitboxes drop below the fist box so it can't be punched while down; 0.4 s grace after getting up. Dead robots stay ragdolls |
 | HP | 200, shown as a bar over each robot (green → red) |
 | dodging | robots notice an incoming enemy rock with probability 0.2 + 0.75·caution, react after 0.2–0.55 s, then sidestep |
 
@@ -28,6 +28,13 @@ Seven 0–1 traits (`scripts/personality.gd`): `aggression`, `caution`, `rock_lo
 `teamwork`, `patience`, `survival` (when hurt: back off, grab a rock on the way, throw from range —
 fades when the enemy is far, worse off than you, or the clock is running out). Presets: Brawler, Slinger, Coward, Tactician, Balanced, Random.
 Each robot gets the team personality ±0.08 jitter so a team isn't five clones.
+
+Doctrine that falls out of the traits:
+- **Slinger** (`rock_love` ≥ 0.75) never punches unless cornered (no rock in hand, none to fetch,
+  enemy within 3 m); throws, then sprints for the next rock.
+- **Coward** (`caution` ≥ 0.8) never closes in: hides behind cover when an enemy is holding a rock,
+  backs off when someone is coming at it, throws only when armed and far away, punches only when cornered.
+- The winning team cheers for two seconds at the end of a match, then the results panel opens.
 
 The brain (`Robot._decide`) is a small utility AI: every 0.15 s it scores
 `dodge / fetch / throw / punch / kite / retreat / regroup / wander` from traits + situation and takes the best

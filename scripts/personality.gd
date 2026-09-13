@@ -17,8 +17,8 @@ const TRAIT_HELP := {
 
 const PRESETS := {
 	"Brawler":   {"aggression": 0.95, "caution": 0.15, "rock_love": 0.15, "accuracy": 0.50, "teamwork": 0.40, "patience": 0.10, "survival": 0.10},
-	"Slinger":   {"aggression": 0.70, "caution": 0.50, "rock_love": 0.95, "accuracy": 0.85, "teamwork": 0.40, "patience": 0.50, "survival": 0.55},
-	"Coward":    {"aggression": 0.25, "caution": 0.95, "rock_love": 0.60, "accuracy": 0.50, "teamwork": 0.60, "patience": 0.80, "survival": 0.95},
+	"Slinger":   {"aggression": 0.70, "caution": 0.55, "rock_love": 0.95, "accuracy": 0.85, "teamwork": 0.40, "patience": 0.50, "survival": 0.55},
+	"Coward":    {"aggression": 0.20, "caution": 0.95, "rock_love": 0.70, "accuracy": 0.50, "teamwork": 0.60, "patience": 0.80, "survival": 0.95},
 	"Tactician": {"aggression": 0.55, "caution": 0.60, "rock_love": 0.70, "accuracy": 0.80, "teamwork": 0.90, "patience": 0.70, "survival": 0.70},
 	"Balanced":  {"aggression": 0.50, "caution": 0.50, "rock_love": 0.50, "accuracy": 0.50, "teamwork": 0.50, "patience": 0.50, "survival": 0.50},
 }

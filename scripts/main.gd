@@ -154,7 +154,8 @@ func _on_match_ended(result: Dictionary) -> void:
 		_restart_timer = AUTO_RESTART_DELAY
 		return
 	if hud != null:
-		hud.show_result(result)
+		# let the winners have their cheer before the panel covers the arena
+		get_tree().create_timer(2.6).timeout.connect(func(): if manager.match_index == result["match"] and not manager.running: hud.show_result(result))
 	elif headless:
 		print(JSON.stringify(result))
 	_restart_timer = AUTO_RESTART_DELAY

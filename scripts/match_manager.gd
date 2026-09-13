@@ -99,6 +99,7 @@ func start_match(seed_value: int = -1) -> void:
 func clear() -> void:
 	running = false
 	for r in robots:
+		r.cleanup()
 		r.queue_free()
 	for rk in rocks:
 		rk.queue_free()
@@ -199,6 +200,10 @@ func end_match(reason: String) -> void:
 		"presets": team_preset_names.duplicate(),
 		"stats": stats.duplicate(true),
 	}
+	if winner >= 0:
+		for r in robots:
+			if r.alive and r.team == winner:
+				r.cheer()
 	match_ended.emit(result)
 
 
