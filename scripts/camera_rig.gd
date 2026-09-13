@@ -11,6 +11,11 @@ var _cam: Camera3D
 var _dragging := false
 var _touches := {}
 var _pinch_d := 0.0
+# optional focus (the winners' celebration): the rig glides to the point and the
+# auto-zoom tightens; a user who is dragging or pinching keeps their own zoom
+var _focus := Vector3(0, 1.0, 0)
+var _focus_target := Vector3(0, 1.0, 0)
+var _focus_dist := -1.0
 
 
 func _ready() -> void:
@@ -26,15 +31,29 @@ func _process(delta: float) -> void:
 	idle += delta
 	if auto_orbit and idle > 6.0:
 		yaw += delta * 0.05
+	var k := clampf(delta * 2.0, 0.0, 1.0)
+	_focus = _focus.lerp(_focus_target, k)
+	if _focus_dist > 0.0 and idle > 6.0:
+		dist = lerpf(dist, _focus_dist, k)
 	_apply()
+
+
+func set_focus(point: Vector3, want_dist: float = -1.0) -> void:
+	_focus_target = Vector3(point.x, 1.0, point.z)
+	_focus_dist = want_dist
+
+
+func clear_focus() -> void:
+	_focus_target = Vector3(0, 1.0, 0)
+	_focus_dist = -1.0
 
 
 func _apply() -> void:
 	pitch = clampf(pitch, 0.15, 1.45)
 	dist = clampf(dist, 10.0, 70.0)
 	var p := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
-	_cam.position = p
-	_cam.look_at(Vector3(0, 1.0, 0), Vector3.UP)
+	_cam.position = _focus + p
+	_cam.look_at(_focus, Vector3.UP)
 
 
 func _unhandled_input(event: InputEvent) -> void:

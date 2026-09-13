@@ -22,6 +22,7 @@ var results_scroll: ScrollContainer
 var results_box: VBoxContainer
 var results_title: Label
 var results_countdown: Label
+var next_row: HFlowContainer
 var preset_buttons: Array[OptionButton] = []
 var sliders := [{}, {}]
 var slider_vals := [{}, {}]
@@ -256,9 +257,28 @@ func _build_results_overlay() -> void:
 	results_scroll = parts[1]
 	results_box = parts[2]
 	results_title = parts[3]
+	# nothing starts by itself: the panel asks, you answer
 	results_countdown = Label.new()
 	results_countdown.add_theme_font_size_override("font_size", 13)
 	results_countdown.add_theme_color_override("font_color", Color(0.75, 0.75, 0.8))
+	next_row = HFlowContainer.new()
+	next_row.add_theme_constant_override("h_separation", 10)
+	next_row.add_theme_constant_override("v_separation", 6)
+	var q := _cell("Start the next match?", true, Color.WHITE, 16)
+	q.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	next_row.add_child(q)
+	var same := Button.new()
+	same.text = "Yes - same teams"
+	same.pressed.connect(func(): _close_overlays(); new_match_requested.emit())
+	next_row.add_child(same)
+	var change := Button.new()
+	change.text = "Change teams first"
+	change.pressed.connect(func(): results_overlay.visible = false; teams_btn.button_pressed = true)
+	next_row.add_child(change)
+	var later := Button.new()
+	later.text = "Not yet"
+	later.pressed.connect(func(): results_overlay.visible = false; teams_btn.set_pressed_no_signal(false))
+	next_row.add_child(later)
 
 
 func on_match_started() -> void:
@@ -344,11 +364,8 @@ func set_status(text: String) -> void:
 	status_label.text = text
 
 
-func set_countdown(seconds: float) -> void:
-	if seconds > 0.0:
-		results_countdown.text = "Next match in %d s  (Close to keep reading; New match to go now)" % int(ceil(seconds))
-	else:
-		results_countdown.text = ""
+func set_countdown(_seconds: float) -> void:
+	results_countdown.text = ""  # matches no longer start on a timer
 
 
 # ---------------------------------------------------------------- results
@@ -356,7 +373,7 @@ func set_countdown(seconds: float) -> void:
 func _clear_results() -> void:
 	for c in results_box.get_children():
 		results_box.remove_child(c)
-		if c != results_countdown:
+		if c != results_countdown and c != next_row:
 			c.queue_free()
 
 
@@ -384,7 +401,7 @@ func show_result(res: Dictionary) -> void:
 	var wcol: Color = MatchManager.TEAM_COLORS[res["winner"]].lightened(0.25) if res["winner"] >= 0 else Color.WHITE
 	results_title.text = "Match %d - %s wins by %s in %d s" % [res["match"], res["winner_name"], res["reason"], int(res["duration"])]
 	results_title.add_theme_color_override("font_color", wcol)
-	results_box.add_child(results_countdown)
+	results_box.add_child(next_row)
 
 	# team table
 	var grid := GridContainer.new()
@@ -441,14 +458,14 @@ func show_result(res: Dictionary) -> void:
 
 	results_overlay.visible = true
 	results_scroll.scroll_vertical = 0
-	set_status("")
+	set_status("Match over. Start the next one with New match (or Teams / setup).")
 
 
 func show_batch(summary: Dictionary) -> void:
 	_clear_results()
 	results_title.text = "Batch results"
 	results_title.add_theme_color_override("font_color", Color.WHITE)
-	results_box.add_child(results_countdown)
+	results_box.add_child(next_row)
 	var l := _cell(summary["text"])
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.custom_minimum_size.x = minf(820.0, get_viewport().get_visible_rect().size.x - 70.0)

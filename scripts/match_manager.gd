@@ -4,6 +4,7 @@ extends Node
 
 signal match_started(match_index: int)
 signal match_ended(result: Dictionary)
+signal celebration_finished(match_index: int)
 
 const TEAM_SIZE := 5
 const MATCH_TIME := 150.0
@@ -28,6 +29,12 @@ var _alive_cache: Array[Robot] = []
 var _cache_frame := -1
 var robot_stats := {}
 var dance_clock := 0.0  # shared beat for the winners' dance
+# victory celebration: "" (none) -> gather -> dance -> teabag -> done
+const GATHER_CAP := 7.0
+const TEABAG_CAP := 24.0
+var celebration_phase := ""
+var _phase_timer := 0.0
+var _celebrants: Array[Robot] = []
 
 
 func start_match(seed_value: int = -1) -> void:
@@ -96,11 +103,15 @@ func start_match(seed_value: int = -1) -> void:
 
 	running = true
 	dance_clock = 0.0
+	celebration_phase = ""
+	_celebrants.clear()
 	match_started.emit(match_index)
 
 
 func clear() -> void:
 	running = false
+	celebration_phase = ""
+	_celebrants.clear()
 	for r in robots:
 		r.cleanup()
 		r.queue_free()
@@ -155,6 +166,7 @@ func team_hp(team: int) -> float:
 func _physics_process(delta: float) -> void:
 	if not running:
 		dance_clock += delta
+		_run_celebration(delta)
 		return
 	elapsed += delta
 	time_left -= delta
@@ -206,10 +218,77 @@ func end_match(reason: String) -> void:
 		"stats": stats.duplicate(true),
 	}
 	if winner >= 0:
-		for r in robots:
-			if r.alive and r.team == winner:
-				r.cheer()
+		_begin_celebration(winner)
+	else:
+		celebration_phase = "done"
+		_phase_timer = 0.0
 	match_ended.emit(result)
+
+
+## Winners jog to a line in front of the centre block, dance together, then the fallen
+## enemies are shared out between them and each winner goes and squats over his share
+## (every corpse gets it at least once). Then the results panel may come up.
+func _begin_celebration(winner: int) -> void:
+	_celebrants.clear()
+	for r in robots:
+		if r.alive and r.team == winner:
+			_celebrants.append(r)
+	var corpses: Array[Robot] = []
+	for r in robots:
+		if not r.alive and r.team != winner:
+			corpses.append(r)
+	# ... nearest to the formation first, so the walk is short
+	corpses.sort_custom(func(a: Robot, b: Robot): return a.global_position.length_squared() < b.global_position.length_squared())
+	var n := _celebrants.size()
+	var shares: Array = []
+	for i in n:
+		var order: Array[Robot] = []
+		shares.append(order)
+	var m := maxi(n, corpses.size())
+	for k in m:
+		if corpses.is_empty():
+			break
+		shares[k % n].append(corpses[k % corpses.size()])
+	for i in n:
+		var spot := Vector3((float(i) - float(n - 1) * 0.5) * 1.8, 0.0, 4.0)
+		_celebrants[i].cheer(spot, shares[i])
+	celebration_phase = "gather"
+	_phase_timer = 0.0
+	dance_clock = 0.0
+
+
+func _run_celebration(delta: float) -> void:
+	if celebration_phase == "" or celebration_phase == "done":
+		return
+	_phase_timer += delta
+	var before := celebration_phase
+	match celebration_phase:
+		"gather":
+			var all_there := true
+			for r in _celebrants:
+				if r.alive and not r.at_spot:
+					all_there = false
+					break
+			if all_there or _phase_timer >= GATHER_CAP:
+				celebration_phase = "dance"
+				_phase_timer = 0.0
+				dance_clock = 0.0
+		"dance":
+			if _phase_timer >= Robot.DANCE_TIME:
+				celebration_phase = "teabag"
+				_phase_timer = 0.0
+		"teabag":
+			var finished := true
+			for r in _celebrants:
+				if r.alive and not r.teabag_done():
+					finished = false
+					break
+			if finished or _phase_timer >= TEABAG_CAP:
+				celebration_phase = "done"
+				_phase_timer = 0.0
+				celebration_finished.emit(match_index)
+	if celebration_phase != before and OS.has_environment("RBCELEB"):
+		print("celebration: %s -> %s at t=%.1f" % [before, celebration_phase, dance_clock])
 
 
 # ---------------------------------------------------------------- stat hooks

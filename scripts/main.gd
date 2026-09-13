@@ -2,7 +2,8 @@ extends Node3D
 ## Entry point. Builds the world, wires the HUD, runs matches; supports headless batch sim:
 ##   godot --headless --path . -- --sim=20 [--red=Brawler --blue=Slinger] [--seed=1]
 
-const AUTO_RESTART_DELAY := 32.0
+# Matches never start by themselves: the results panel asks. Only a batch chains on.
+const CELEBRATION_CAP := 48.0      # results come up by then whatever the winners are doing
 
 var manager: MatchManager
 var arena: Arena
@@ -13,6 +14,8 @@ var batch_left := 0
 var batch_results: Array[Dictionary] = []
 var _restart_timer := -1.0
 var _base_seed := -1
+var _last_result: Dictionary = {}
+var _results_shown_for := -1
 
 
 func _ready() -> void:
@@ -24,6 +27,7 @@ func _ready() -> void:
 	manager.world = self
 	manager.arena = arena
 	manager.match_ended.connect(_on_match_ended)
+	manager.celebration_finished.connect(_on_celebration_finished)
 	add_child(manager)
 
 	var args := _parse_args(OS.get_cmdline_user_args())
@@ -123,10 +127,20 @@ func _run_batch(n: int) -> void:
 
 
 func _process(delta: float) -> void:
+	if cam != null and manager != null and not manager.running and manager.celebration_phase != "" and manager.celebration_phase != "done":
+		# follow the winners' celebration; back off to the whole arena for the results
+		var c := Vector3.ZERO
+		var n := 0
+		for r in manager.robots:
+			if r.alive and r.celebrating:
+				c += r.global_position
+				n += 1
+		if n > 0:
+			cam.set_focus(c / n, 16.0 if manager.celebration_phase == "teabag" else 18.0)
+	elif cam != null:
+		cam.clear_focus()
 	if _restart_timer > 0.0:
 		_restart_timer -= delta
-		if hud != null and batch_left == 0:
-			hud.set_countdown(_restart_timer)
 		if _restart_timer <= 0.0:
 			_start_next()
 
@@ -149,19 +163,38 @@ func _on_match_ended(result: Dictionary) -> void:
 			for rr in batch_results[-1]["robots"]:
 				print("  %s %s dmg=%d rock=%d punch=%d throws=%d/%d punches=%d/%d kd=%d kills=%d hp=%d" % [rr["name"], rr["preset"], int(rr["dmg_rock"] + rr["dmg_punch"]), int(rr["dmg_rock"]), int(rr["dmg_punch"]), rr["rock_hits"], rr["throws"], rr["punch_hits"], rr["punches"], rr["knockdowns"], rr["kills"], int(rr["hp"])])
 			print(JSON.stringify(summary["data"]))
+			if OS.has_environment("RBCELEB") and manager.celebration_phase != "done":
+				# let the winners finish their celebration so it gets exercised headless
+				manager.celebration_finished.connect(func(_i: int): _celeb_report(); get_tree().quit())
+				get_tree().create_timer(CELEBRATION_CAP).timeout.connect(func(): print("celebration: CAP HIT in phase %s" % manager.celebration_phase); _celeb_report(); get_tree().quit())
+				return
 			get_tree().quit()
 			return
 		hud.show_batch(summary)
 		set_sim_speed(1.0)
 		hud._set_speed(1.0)
-		_restart_timer = AUTO_RESTART_DELAY
+		_restart_timer = -1.0
 		return
 	if hud != null:
-		# let the winners have their cheer before the panel covers the arena
-		get_tree().create_timer(Robot.DANCE_TIME + 0.6).timeout.connect(func(): if manager.match_index == result["match"] and not manager.running: hud.show_result(result))
+		# the panel waits for the winners: gather, dance, pay their respects (or a draw's short pause)
+		_last_result = result
+		hud.set_status("Match over - %s" % result["winner_name"] if result["winner"] >= 0 else "Match over - draw")
+		var delay := 1.5 if result["winner"] < 0 else CELEBRATION_CAP
+		get_tree().create_timer(delay).timeout.connect(func(): _on_celebration_finished(result["match"]))
+		_restart_timer = -1.0
+		return
 	elif headless:
 		print(JSON.stringify(result))
-	_restart_timer = AUTO_RESTART_DELAY
+	_restart_timer = -1.0
+
+
+func _on_celebration_finished(idx: int) -> void:
+	if hud == null or _last_result.is_empty() or manager.running or idx != manager.match_index or _results_shown_for == idx:
+		return
+	if batch_left > 0:
+		return
+	_results_shown_for = idx
+	hud.show_result(_last_result)
 
 
 func _summarize(results: Array[Dictionary]) -> Dictionary:
@@ -213,3 +246,9 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 			"damage": dmg, "throws": throws, "rock_hits": rock_hits, "punches": punches, "punch_hits": punch_hits,
 			"hitbox_hist": hist, "knockdowns": kds, "presets": names},
 	}
+
+
+func _celeb_report() -> void:
+	for r in manager.robots:
+		if r.celebrating:
+			print("  %s spot=%s at_spot=%s teabagged=%d/%d pos=%s" % [r.robot_name, r.formation_spot, r.at_spot, r.teabag_idx, r.teabag_targets.size(), r.global_position])

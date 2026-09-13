@@ -18,6 +18,9 @@ const PUNCH_KNOCKDOWN_TIME := 1.1
 const PUNCH_FLOP_TIME := 0.55       # a landed punch that doesn't floor you still sends you sprawling
 const ROCK_KNOCKDOWN_TIME := 1.8    # every rock hit floors you
 const DANCE_TIME := 10.0
+const TEABAG_PERIOD := 0.55        # one squat
+const TEABAG_REPS := 4             # squats per corpse
+const TEABAG_DEPTH := 0.62
 const RECOVER_GRACE := 0.4          # can't be floored again right after getting up
 const PUNCH_COOLDOWN := 0.6         # 4x faster than a throw
 const PUNCH_REACH := 1.7
@@ -25,6 +28,8 @@ const THROW_COOLDOWN := 2.4
 const THROW_RANGE := 20.0
 const PICKUP_RANGE := 1.5
 const DECISION_INTERVAL := 0.15
+const FOV_COS := -0.09              # cos of the half field of view (~95 degrees each side)
+const EYE_HEIGHT := 1.75
 
 const LAYER_WORLD := 1
 const LAYER_ROBOTS := 2
@@ -54,6 +59,18 @@ var wander_timer := 0.0
 var stuck_timer := 0.0
 var fetch_rock: Rock = null
 var _rock_notice := {}  # rock -> did we notice this throw (caution-based reaction)
+var _dodge_burst := 0.0
+
+# victory celebration (driven by MatchManager.celebration_phase)
+var celebrating := false
+var formation_spot := Vector3.ZERO
+var at_spot := false
+var teabag_targets: Array[Robot] = []
+var teabag_idx := 0
+var teabag_timer := 0.0
+var _walk_stuck := 0.0
+var _walk_detour := 0.0
+var _walk_detour_dir := Vector3.ZERO
 
 var hitboxes: Array[Area3D] = []
 var fist: Area3D
@@ -272,16 +289,31 @@ func _physics_process(delta: float) -> void:
 		# match over: stand still; winners cheer for a couple of seconds
 		velocity = Vector3.ZERO
 		move_dir = Vector3.ZERO
-		if cheer_timer > 0.0:
-			cheer_timer -= delta
-			_dance(manager.dance_clock)
-			if cheer_timer <= 0.0:
-				body_root.position.y = 0.0
-				body_root.rotation = Vector3.ZERO
-				arm_l.rotation = Vector3.ZERO
-				arm_r.rotation = Vector3.ZERO
-		if ragdoll != null and down_timer > 0.0:
+		if down_timer > 0.0:
 			_follow_ragdoll()
+			if celebrating:
+				down_timer -= delta
+				if down_timer <= 0.0:
+					_get_up()
+			return
+		if not celebrating:
+			return
+		match manager.celebration_phase:
+			"gather":
+				if _walk_to(formation_spot, delta, 0.5):
+					at_spot = true
+					look_at(global_position + Vector3(0, 0, 1), Vector3.UP)
+					_reset_pose()
+					arm_l.rotation.x = -PI + sin(manager.dance_clock * 6.0) * 0.2  # arms up, waiting for the others
+					arm_r.rotation.x = -PI - sin(manager.dance_clock * 6.0) * 0.2
+			"dance":
+				_dance(manager.dance_clock)
+			"teabag":
+				_teabag(delta)
+			_:
+				_reset_pose()
+				arm_l.rotation.x = -PI
+				arm_r.rotation.x = -PI
 		return
 	if down_timer > 0.0:
 		down_timer -= delta
@@ -302,7 +334,10 @@ func _physics_process(delta: float) -> void:
 	if mv.length_squared() > 0.001:
 		mv = mv.normalized()
 	var speed_mult := 0.92 + 0.16 * personality.get_trait("aggression")
-	if has_face_point and mv.length_squared() > 0.001:
+	if _dodge_burst > 0.0:
+		_dodge_burst -= delta
+		speed_mult *= 1.25  # a jolt of adrenaline: the dodge is a sprint, whichever way you face
+	elif has_face_point and mv.length_squared() > 0.001:
 		# backpedalling (moving away from what you're facing) is slower - chasers catch fleers
 		var facing := face_point - global_position
 		facing.y = 0.0
@@ -376,6 +411,8 @@ func _throw_target() -> Robot:
 		if d > THROW_RANGE:
 			continue
 		var aim_y := 0.35 if r.down_timer > 0.0 else 1.1
+		if not _can_see(r.global_position + Vector3(0, aim_y, 0)):
+			continue  # can't aim at what you aren't looking at
 		if not _clear_line(origin, r.global_position + Vector3(0, aim_y, 0)):
 			continue
 		var cost := d + (12.0 if r.down_timer > 0.0 else 0.0)
@@ -383,6 +420,19 @@ func _throw_target() -> Robot:
 			best_cost = cost
 			best = r
 	return best
+
+
+## Eyes, not radar: a point is seen only if it lies inside the field of view
+## (about 190 degrees, so a little past the shoulders) AND nothing solid blocks the eye line.
+func _can_see(point: Vector3) -> bool:
+	var forward := -global_transform.basis.z
+	forward.y = 0.0
+	var to := point - global_position
+	to.y = 0.0
+	if to.length_squared() > 0.04 and forward.length_squared() > 0.001:
+		if forward.normalized().dot(to.normalized()) < FOV_COS:
+			return false
+	return _clear_line(global_position + Vector3(0, EYE_HEIGHT, 0), point)
 
 
 func _clear_line(from: Vector3, to: Vector3) -> bool:
@@ -452,14 +502,21 @@ func _incoming_threat() -> Dictionary:
 	var best := {}
 	var best_t := INF
 	var caution := personality.get_trait("caution")
-	var notice_p := 0.2 + caution * 0.75
-	var reaction := 0.2 + (1.0 - caution) * 0.35  # seconds before the dodge starts
 	for rk: Rock in manager.rocks:
 		if rk.state != Rock.State.THROWN or rk.thrower == null or rk.thrower == self:
 			_rock_notice.erase(rk)  # friendly rocks hurt just the same - mind them too
 			continue
-		if not _rock_notice.has(rk):
-			_rock_notice[rk] = (manager.elapsed + reaction) if rng.randf() < notice_p else -1.0
+		# Seeing it is everything: a rock you are looking at (in the field of view, not behind
+		# cover) is spotted almost every time and dodged after a short reaction; one coming
+		# from behind or over a block is simply not seen. Not spotted yet? Look again each tick.
+		if not _rock_notice.has(rk) or _rock_notice[rk] < 0.0:
+			if _can_see(rk.global_position):
+				var first := not _rock_notice.has(rk)
+				var notice_p := 0.92 if first else 0.6
+				var reaction := 0.08 + (1.0 - caution) * 0.2
+				_rock_notice[rk] = (manager.elapsed + reaction) if rng.randf() < notice_p else -1.0
+			else:
+				_rock_notice[rk] = -1.0
 		if _rock_notice[rk] < 0.0 or manager.elapsed < _rock_notice[rk]:
 			continue
 		var v: Vector3 = rk.linear_velocity
@@ -537,7 +594,8 @@ func _decide() -> void:
 		scores["retreat"] = s4 * flee_sense
 	# dodge an incoming rock
 	if not threat.is_empty():
-		scores["dodge"] = 0.35 + caution * 1.4 * clampf(1.5 - threat["time"], 0.2, 1.0)
+		# a rock you have seen coming at you beats everything else: get out of its way
+		scores["dodge"] = 2.0 + caution * 0.5 + clampf(1.5 - threat["time"], 0.0, 1.0)
 	# go get a rock
 	if rock != null:
 		scores["fetch"] = 0.12 + rock_love * clampf(1.0 - rdist / 30.0, 0.15, 1.0) * (1.2 if enemy == null or edist > 6.0 else 0.5)
@@ -613,10 +671,19 @@ func _decide() -> void:
 
 	match action:
 		"dodge":
-			move_dir = threat["perp"]
-			if enemy != null:
-				face_point = enemy.global_position
-				has_face_point = true
+			# sprint sideways out of the rock's path (a cornered robot veers off the wall);
+			# with a lot of time in hand the cautious also fall back a step
+			var esc: Vector3 = threat["perp"]
+			if threat["time"] > 0.8 and caution > 0.5:
+				var rk: Rock = threat["rock"]
+				var away := global_position - rk.global_position
+				away.y = 0.0
+				esc = (esc + away.normalized() * 0.5).normalized()
+			move_dir = _keep_in_arena(esc)
+			_dodge_burst = 0.45
+			var rk2: Rock = threat["rock"]
+			face_point = rk2.global_position  # eyes on the rock
+			has_face_point = true
 		"fetch":
 			fetch_rock = rock
 			rock.claimed_by = self
@@ -877,10 +944,113 @@ func _dance(t: float) -> void:
 	arm_r.rotation.z = 0.5 - sin(beat + 0.7) * 0.4
 
 
-func cheer() -> void:
-	if alive and down_timer <= 0.0:
-		cheer_timer = DANCE_TIME
-		_cheer_phase = rng.randf_range(0.0, TAU)
+## Join the victory celebration: run to the formation spot, dance with the team, then
+## visit the fallen. A winner still on the floor gets up first and hurries along.
+func cheer(spot: Vector3, corpses: Array[Robot]) -> void:
+	if not alive:
+		return
+	celebrating = true
+	formation_spot = spot
+	at_spot = false
+	teabag_targets = corpses
+	teabag_idx = 0
+	teabag_timer = 0.0
+	_cheer_phase = rng.randf_range(0.0, TAU)
+	if held_rock != null:
+		held_rock.drop()
+		held_rock = null
+
+
+func teabag_done() -> bool:
+	return teabag_idx >= teabag_targets.size()
+
+
+## Where the body lies (the ragdoll's torso once it has settled).
+func corpse_position() -> Vector3:
+	var p := global_position
+	if ragdoll != null and is_instance_valid(ragdoll):
+		p = ragdoll.torso_position()
+	p.y = 0.0
+	return p
+
+
+func _reset_pose() -> void:
+	body_root.position.y = 0.0
+	body_root.rotation = Vector3.ZERO
+	arm_l.rotation = Vector3.ZERO
+	arm_r.rotation = Vector3.ZERO
+
+
+## Post-match locomotion (the utility brain is off): jog straight at a point.
+## Returns true once within stop_dist.
+func _walk_to(target: Vector3, _delta: float, stop_dist: float) -> bool:
+	var to := target - global_position
+	to.y = 0.0
+	if to.length() <= stop_dist:
+		velocity = Vector3.ZERO
+		return true
+	var dir := to.normalized()
+	if _walk_detour > 0.0:
+		_walk_detour -= _delta
+		dir = (dir * 0.3 + _walk_detour_dir).normalized()  # skirting a block or a teammate
+	velocity = dir * SPEED * 0.9
+	var before := global_position
+	move_and_slide()
+	global_position.y = 0.0
+	if before.distance_to(global_position) < SPEED * 0.9 * _delta * 0.35:
+		_walk_stuck += _delta
+		if _walk_stuck > 0.25 and _walk_detour <= 0.0:
+			_walk_detour = 0.7
+			_walk_detour_dir = dir.rotated(Vector3.UP, PI * 0.5 * (1.0 if rng.randf() < 0.5 else -1.0))
+			_walk_stuck = 0.0
+	else:
+		_walk_stuck = 0.0
+	var fp := global_position + to
+	fp.y = global_position.y
+	look_at(fp, Vector3.UP)
+	# a light jog: bob and swing
+	var t := Time.get_ticks_msec() * 0.001 + _cheer_phase
+	body_root.position.y = absf(sin(t * 9.0)) * 0.08
+	arm_l.rotation.x = sin(t * 9.0) * 0.6
+	arm_r.rotation.x = -sin(t * 9.0) * 0.6
+	return false
+
+
+## Stand astride a fallen foe and squat over him, four times, then move to the next.
+func _teabag(delta: float) -> void:
+	if teabag_done():
+		_reset_pose()
+		arm_l.rotation.x = -PI
+		arm_r.rotation.x = -PI
+		return
+	var victim: Robot = teabag_targets[teabag_idx]
+	if victim == null or not is_instance_valid(victim):
+		teabag_idx += 1
+		return
+	var spot := victim.corpse_position()
+	if not _walk_to(spot, delta, 0.3):
+		return
+	if teabag_timer == 0.0:
+		# face along the body, so the squat lands on the chest
+		var head := spot + Vector3(0, 0, 1)
+		if victim.ragdoll != null and is_instance_valid(victim.ragdoll):
+			head = victim.ragdoll.head_position()
+		head.y = 0.0
+		if head.distance_squared_to(global_position) > 0.01:
+			look_at(head, Vector3.UP)
+	teabag_timer += delta
+	var s := 0.5 - 0.5 * cos(teabag_timer / TEABAG_PERIOD * TAU)  # 0 standing .. 1 deep squat
+	body_root.position.y = -TEABAG_DEPTH * s
+	body_root.rotation.x = 0.3 * s      # knees forward, a little lean back
+	body_root.rotation.z = 0.0
+	arm_l.rotation.x = -0.9 * s          # arms come forward for balance
+	arm_r.rotation.x = -0.9 * s
+	arm_l.rotation.z = -0.3 * s
+	arm_r.rotation.z = 0.3 * s
+	if teabag_timer >= TEABAG_PERIOD * TEABAG_REPS:
+		teabag_timer = 0.0
+		teabag_idx += 1
+		_reset_pose()
 
 
 func cleanup() -> void:

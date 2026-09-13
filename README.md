@@ -18,7 +18,7 @@ Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
 | punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. Every landed punch sends the target sprawling as a ragdoll (0.55 s); with **chance 50 % × hit quality** it's a proper floor (1.1 s) |
 | knockdown | the robot becomes a **ragdoll** (six pinned rigid bodies) and gets shoved away from the hit; it can't act, and its hitboxes drop below the fist box so it can't be punched while down; 0.4 s grace after getting up. Dead robots stay ragdolls |
 | HP | 200, shown as a bar over each robot (green → red) |
-| dodging | robots notice an incoming enemy rock with probability 0.2 + 0.75·caution, react after 0.2–0.55 s, then sidestep |
+| eyes | robots see ~190° in front of them and not through cover. A rock they can see coming is spotted 92 % of the time, and after 0.08–0.28 s (quicker when cautious) they drop everything and sprint out of its path; a rock from behind or over a block is never seen. Throws need the target in view too |
 
 All of these are `const`s at the top of `scripts/robot.gd` and `scripts/rock.gd`.
 
@@ -36,7 +36,8 @@ Doctrine that falls out of the traits:
   backs off when someone is coming at it, throws only when armed and far away, punches only when cornered.
 - Throws pick the nearest enemy that is standing and has a clear line (raycast against cover); a floored
   enemy is aimed at low and only if nobody is up.
-- The winning team dances for ten seconds — hips, arms and a slow turn, all on one shared beat — then the results panel opens.
+- Seeing an incoming rock beats every other urge: the dodge is a sideways sprint (with a step back if there is time and the robot is cautious).
+- The winning team jogs to a line in front of the centre block, dances for ten seconds — hips, arms and a slow turn, all on one shared beat — then shares out the fallen enemies and squats over each of them four times. Then the results panel opens.
 
 The brain (`Robot._decide`) is a small utility AI: every 0.15 s it scores
 `dodge / fetch / throw / punch / kite / retreat / regroup / wander` from traits + situation and takes the best
@@ -51,9 +52,11 @@ the cooldown is up.
 - `Live list` — per-robot HP / current action. `Last results` reopens the last match's results.
 - `New match`, `Batch x10` — batch runs at 8× and prints win rates, damage by source, throw/punch accuracy,
   knockdowns and a histogram of hitboxes-struck-per-rock-hit.
+- Nothing starts by itself: after the celebration the results panel asks *Start the next match?* —
+  same teams, change teams first, or not yet. The camera follows the winners while they celebrate.
 - At the end of a match a results panel shows team totals (throws/hits %, punches/hits %, damage by
   source, knockdowns, kills) and a per-robot table (damage by source, accuracy, knockdowns, kills, HP).
-  Matches auto-restart 20 s later; the UI scales with device pixel density and wraps for phones.
+  The UI scales with device pixel density and wraps for phones.
 
 ## Headless simulation
 
@@ -64,8 +67,9 @@ godot --headless --path . -- --sim=20 --red=Slinger --blue=Brawler --seed=1
 Prints one line per match, a summary line, then a JSON blob (wins, avg duration, damage by source,
 throws / hits, punches / hits, hitbox histogram). Runs at 20× game speed.
 
-Sample (12 matches, seed 5): Slinger 6 – Brawler 6, avg 34 s. Slingers: 99 rock dmg + 810 punch dmg per
-match, 49 % throw accuracy. Brawlers: 873 punch dmg. Balanced mirror (seed 33): 6–6.
+Sample (6 matches, seed 5): Slinger 2 – Brawler 4, avg 32 s; slingers 606 rock dmg per match at 51 %
+throw accuracy (they only throw at what they can see), brawlers 948 punch dmg. Slinger 3 – Balanced 3.
+Set `RBCELEB=1` to let the winners finish their celebration headless (prints the phase changes).
 
 ## Build / deploy
 

@@ -89,3 +89,7 @@ func shove(impulse: Vector3) -> void:
 
 func torso_position() -> Vector3:
 	return torso.global_position if torso != null else global_position
+
+
+func head_position() -> Vector3:
+	return bodies["head"].global_position if bodies.has("head") else torso_position()
