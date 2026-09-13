@@ -5,7 +5,8 @@ extends RigidBody3D
 enum State { IDLE, HELD, THROWN, SPENT }
 
 const SPEED := 18.0          # 3x robot speed
-const DMG_PER_HITBOX := 7.5
+const MAX_DAMAGE_FRAC := 0.5   # a direct hit (FULL_HITBOXES parts struck) takes half of max HP
+const FULL_HITBOXES := 4
 const RADIUS := 0.3
 const FLIGHT_GRAVITY := 0.35 # lofted throw so 18 m/s reaches ~20 m
 const MAX_AIRTIME := 3.0
@@ -183,6 +184,8 @@ func _on_impact_area(area: Area3D) -> void:
 		if hb.global_position.distance_to(global_position) < SPLASH_RADIUS:
 			count += 1
 	count = maxi(count, 1)
-	robot.take_damage(DMG_PER_HITBOX * count, "rock", thrower, count)
+	var quality := minf(float(count), float(FULL_HITBOXES)) / float(FULL_HITBOXES)
+	robot.take_damage(Robot.MAX_HP * MAX_DAMAGE_FRAC * quality, "rock", thrower, count)
+	robot.knock_down(Robot.ROCK_KNOCKDOWN_TIME, thrower, "rock")
 	linear_velocity *= 0.3
 	_spend()

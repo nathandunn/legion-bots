@@ -26,6 +26,7 @@ var stats := {}
 var rng := RandomNumberGenerator.new()
 var _alive_cache: Array[Robot] = []
 var _cache_frame := -1
+var robot_stats := {}
 
 
 func start_match(seed_value: int = -1) -> void:
@@ -38,6 +39,7 @@ func start_match(seed_value: int = -1) -> void:
 	time_left = MATCH_TIME
 	elapsed = 0.0
 	stats = _fresh_stats()
+	robot_stats = {}
 
 	# interleave + shuffle spawn order so neither team gets first-strike from tree order
 	var slots := []
@@ -69,8 +71,12 @@ func start_match(seed_value: int = -1) -> void:
 			r.died.connect(_on_died)
 			r.threw.connect(_on_threw)
 			r.punched.connect(_on_punched)
+			r.knocked_down.connect(_on_knocked_down)
 			world.add_child(r)
 			robots.append(r)
+			robot_stats[r.robot_name] = {"name": r.robot_name, "team": t, "preset": r.personality.label(),
+				"dmg_rock": 0.0, "dmg_punch": 0.0, "dmg_taken": 0.0, "throws": 0, "rock_hits": 0,
+				"punches": 0, "punch_hits": 0, "knockdowns": 0, "kills": 0, "hp": r.hp, "alive": true}
 
 	var n_rocks := int(ceil(TEAM_SIZE * 2 * ROCKS_PER_ROBOT))
 	var tries := 0
@@ -109,6 +115,7 @@ func _fresh_stats() -> Dictionary:
 		"punches": [0, 0],
 		"punch_hits": [0, 0],
 		"kills": [0, 0],
+		"knockdowns": [0, 0],
 		"hitbox_hist": {},   # hitboxes struck per rock hit -> count
 	}
 
@@ -168,7 +175,20 @@ func end_match(reason: String) -> void:
 		winner = 1
 	elif hp0 != hp1:
 		winner = 0 if hp0 > hp1 else 1
+	if OS.has_environment("RBDBG"):
+		for r in robots:
+			if r.alive:
+				var e := r._nearest_enemy()
+				print("    %s hp=%d act=%s rock=%s edist=%.1f pos=%s" % [r.robot_name, int(r.hp), r.action, r.held_rock != null, r._flat_dist(e.global_position) if e else -1.0, r.global_position])
+	var per_robot := []
+	for r in robots:
+		var rs: Dictionary = robot_stats[r.robot_name]
+		rs["hp"] = r.hp
+		rs["alive"] = r.alive
+		per_robot.append(rs.duplicate())
+	per_robot.sort_custom(func(a, b): return a["team"] < b["team"] if a["team"] != b["team"] else a["name"] < b["name"])
 	var result := {
+		"robots": per_robot,
 		"match": match_index,
 		"winner": winner,
 		"winner_name": TEAM_NAMES[winner] if winner >= 0 else "Draw",
@@ -184,15 +204,23 @@ func end_match(reason: String) -> void:
 
 # ---------------------------------------------------------------- stat hooks
 
-func _on_damaged(_robot: Robot, amount: float, source: String, attacker: Robot, hitbox_count: int) -> void:
+func _on_damaged(robot: Robot, amount: float, source: String, attacker: Robot, hitbox_count: int) -> void:
 	if attacker == null:
 		return
 	var t := attacker.team
 	stats["damage"][t][source] += amount
+	robot_stats[robot.robot_name]["dmg_taken"] += amount
+	var a: Dictionary = robot_stats[attacker.robot_name]
 	if source == "rock":
 		stats["rock_hits"][t] += 1
+		a["rock_hits"] += 1
+		a["dmg_rock"] += amount
 		var h: Dictionary = stats["hitbox_hist"]
 		h[hitbox_count] = int(h.get(hitbox_count, 0)) + 1
+	else:
+		a["dmg_punch"] += amount
+	if robot.hp <= amount and robot.alive:
+		a["kills"] += 1
 
 
 func _on_died(robot: Robot) -> void:
@@ -201,9 +229,19 @@ func _on_died(robot: Robot) -> void:
 
 func _on_threw(robot: Robot) -> void:
 	stats["throws"][robot.team] += 1
+	robot_stats[robot.robot_name]["throws"] += 1
 
 
 func _on_punched(robot: Robot, landed: bool) -> void:
 	stats["punches"][robot.team] += 1
+	robot_stats[robot.robot_name]["punches"] += 1
 	if landed:
 		stats["punch_hits"][robot.team] += 1
+		robot_stats[robot.robot_name]["punch_hits"] += 1
+
+
+func _on_knocked_down(_robot: Robot, by: Robot, _source: String) -> void:
+	if by == null:
+		return
+	stats["knockdowns"][by.team] += 1
+	robot_stats[by.robot_name]["knockdowns"] += 1

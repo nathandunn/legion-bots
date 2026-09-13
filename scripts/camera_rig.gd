@@ -16,6 +16,7 @@ var _pinch_d := 0.0
 func _ready() -> void:
 	_cam = Camera3D.new()
 	_cam.fov = 60.0
+	_cam.keep_aspect = Camera3D.KEEP_WIDTH  # portrait phones see the whole arena too
 	_cam.far = 300.0
 	add_child(_cam)
 	_apply()

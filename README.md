@@ -10,25 +10,27 @@ Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
 | thing | value |
 |---|---|
 | teams | 5 v 5, last team standing, 150 s cap (most total HP wins on time) |
-| robot speed | 6 m/s (±8 % by aggression) |
+| robot speed | 6 m/s (±8 % by aggression); backpedalling (moving away from what you face) is 22 % slower, so chasers catch fleers |
 | rock speed | 18 m/s (3× robot), ~20 m range, lofted flight |
 | rocks | 5 on the field (1 per 2 robots), scattered, reusable — thrown rocks land and can be picked up again |
-| hitboxes | head, torso, 2 arms, 2 legs. Damage = per-hitbox damage × hitboxes struck |
-| rock hit | 7.5 / hitbox, splash radius 0.78 m → typically 1–4 hitboxes (up to 5) |
-| punch | 2.5 / hitbox (1/3 of a rock), every 0.6 s (4× a throw's 2.4 s), no rock needed, fist box catches 1–2 hitboxes |
-| HP | 200 |
-| dodging | robots notice an incoming enemy rock with probability 0.2 + 0.75·caution and sidestep |
+| hitboxes | head, torso, 2 arms, 2 legs. Hit quality = parts struck / "full" parts |
+| rock hit | up to **50 % of max HP** for a direct hit (4+ parts within the 0.78 m splash); 1 part = 12.5 %. **Always knocks the robot down** (1.8 s) |
+| punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. **Knockdown chance 50 % × hit quality** (1.1 s) |
+| knockdown | robot drops flat, can't act; 0.4 s grace after getting up. A flat robot is below the fist box, so it can't be punched while down |
+| HP | 200, shown as a bar over each robot (green → red) |
+| dodging | robots notice an incoming enemy rock with probability 0.2 + 0.75·caution, react after 0.2–0.55 s, then sidestep |
 
 All of these are `const`s at the top of `scripts/robot.gd` and `scripts/rock.gd`.
 
 ## Personalities
 
-Six 0–1 traits (`scripts/personality.gd`): `aggression`, `caution`, `rock_love`, `accuracy`,
-`teamwork`, `patience`. Presets: Brawler, Slinger, Coward, Tactician, Balanced, Random.
+Seven 0–1 traits (`scripts/personality.gd`): `aggression`, `caution`, `rock_love`, `accuracy`,
+`teamwork`, `patience`, `survival` (when hurt: back off, grab a rock on the way, throw from range —
+fades when the enemy is far, worse off than you, or the clock is running out). Presets: Brawler, Slinger, Coward, Tactician, Balanced, Random.
 Each robot gets the team personality ±0.08 jitter so a team isn't five clones.
 
 The brain (`Robot._decide`) is a small utility AI: every 0.15 s it scores
-`dodge / fetch / throw / punch / kite / regroup / wander` from traits + situation and takes the best
+`dodge / fetch / throw / punch / kite / retreat / regroup / wander` from traits + situation and takes the best
 (with hysteresis). Punches and throws also fire opportunistically whenever a target is in reach and
 the cooldown is up.
 
@@ -36,10 +38,13 @@ the cooldown is up.
 
 - Drag to orbit, wheel / pinch to zoom. Camera auto-orbits when idle.
 - `1x 2x 4x 8x` — sim speed (raises the physics tick rate to match, so fast mode is not sloppier).
-- `Teams` — preset + sliders per team; applies to the next match.
-- `New match`, `Batch x10` — batch runs at 8× and prints win rates, damage by source, throw/punch accuracy
-  and a histogram of hitboxes-struck-per-rock-hit.
-- Matches auto-restart 5 s after they end.
+- `Teams / setup` — preset + sliders per team, then `Start match with these teams`.
+- `Live list` — per-robot HP / current action. `Last results` reopens the last match's results.
+- `New match`, `Batch x10` — batch runs at 8× and prints win rates, damage by source, throw/punch accuracy,
+  knockdowns and a histogram of hitboxes-struck-per-rock-hit.
+- At the end of a match a results panel shows team totals (throws/hits %, punches/hits %, damage by
+  source, knockdowns, kills) and a per-robot table (damage by source, accuracy, knockdowns, kills, HP).
+  Matches auto-restart 20 s later; the UI scales with device pixel density and wraps for phones.
 
 ## Headless simulation
 

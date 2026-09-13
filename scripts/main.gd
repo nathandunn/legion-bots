@@ -2,7 +2,7 @@ extends Node3D
 ## Entry point. Builds the world, wires the HUD, runs matches; supports headless batch sim:
 ##   godot --headless --path . -- --sim=20 [--red=Brawler --blue=Slinger] [--seed=1]
 
-const AUTO_RESTART_DELAY := 5.0
+const AUTO_RESTART_DELAY := 20.0
 
 var manager: MatchManager
 var arena: Arena
@@ -44,6 +44,7 @@ func _ready() -> void:
 		_start_next()
 		return
 
+	_setup_ui_scale()
 	cam = CameraRig.new()
 	add_child(cam)
 	hud = Hud.new()
@@ -53,6 +54,16 @@ func _ready() -> void:
 	hud.batch_requested.connect(_run_batch)
 	hud.speed_changed.connect(set_sim_speed)
 	_start_next()
+
+
+## UI in real pixels, scaled by the device's pixel density, so a phone gets big
+## controls and a desktop doesn't get a blown-up toy. Rows wrap instead of stretching.
+func _setup_ui_scale() -> void:
+	var root := get_tree().root
+	root.content_scale_mode = Window.CONTENT_SCALE_MODE_DISABLED
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_IGNORE
+	var dpi := DisplayServer.screen_get_dpi()
+	root.content_scale_factor = clampf(float(dpi) / 96.0, 1.0, 3.0)
 
 
 ## Speed up game time WITHOUT coarsening physics: Godot scales the physics delta by time_scale,
@@ -91,6 +102,8 @@ func _parse_args(list: PackedStringArray) -> Dictionary:
 
 func _start_next() -> void:
 	_restart_timer = -1.0
+	if hud != null:
+		hud.on_match_started()
 	var s := -1
 	if _base_seed >= 0:
 		s = _base_seed + manager.match_index
@@ -109,6 +122,8 @@ func _run_batch(n: int) -> void:
 func _process(delta: float) -> void:
 	if _restart_timer > 0.0:
 		_restart_timer -= delta
+		if hud != null and batch_left == 0:
+			hud.set_countdown(_restart_timer)
 		if _restart_timer <= 0.0:
 			_start_next()
 
@@ -121,13 +136,15 @@ func _on_match_ended(result: Dictionary) -> void:
 			print("  match %d: %s by %s in %ds (alive %d-%d)" % [result["match"], result["winner_name"], result["reason"], int(result["duration"]), result["alive"][0], result["alive"][1]])
 		if batch_left > 0:
 			if hud != null:
-				hud.result_label.text = "Batch: %d done, %d to go..." % [batch_results.size(), batch_left]
+				hud.set_status("Batch: %d done, %d to go..." % [batch_results.size(), batch_left])
 			# let physics settle a frame before respawn
 			_restart_timer = 0.05
 			return
 		var summary := _summarize(batch_results)
 		if headless:
 			print(summary["text"])
+			for rr in batch_results[-1]["robots"]:
+				print("  %s %s dmg=%d rock=%d punch=%d throws=%d/%d punches=%d/%d kd=%d kills=%d hp=%d" % [rr["name"], rr["preset"], int(rr["dmg_rock"] + rr["dmg_punch"]), int(rr["dmg_rock"]), int(rr["dmg_punch"]), rr["rock_hits"], rr["throws"], rr["punch_hits"], rr["punches"], rr["knockdowns"], rr["kills"], int(rr["hp"])])
 			print(JSON.stringify(summary["data"]))
 			get_tree().quit()
 			return
@@ -138,6 +155,8 @@ func _on_match_ended(result: Dictionary) -> void:
 		return
 	if hud != null:
 		hud.show_result(result)
+	elif headless:
+		print(JSON.stringify(result))
 	_restart_timer = AUTO_RESTART_DELAY
 
 
@@ -150,6 +169,7 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 	var rock_hits := [0, 0]
 	var punches := [0, 0]
 	var punch_hits := [0, 0]
+	var kds := [0, 0]
 	var hist := {}
 	for r in results:
 		if r["winner"] >= 0:
@@ -165,6 +185,7 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 			rock_hits[t] += s["rock_hits"][t]
 			punches[t] += s["punches"][t]
 			punch_hits[t] += s["punch_hits"][t]
+			kds[t] += s["knockdowns"][t]
 		for k in s["hitbox_hist"]:
 			hist[k] = int(hist.get(k, 0)) + int(s["hitbox_hist"][k])
 	var n := maxi(results.size(), 1)
@@ -174,8 +195,8 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 	for t in 2:
 		var acc := float(rock_hits[t]) / maxf(throws[t], 1) * 100.0
 		var pacc := float(punch_hits[t]) / maxf(punches[t], 1) * 100.0
-		txt += "%s per match: rock %d / punch %d dmg, throw acc %d%%, punch acc %d%%.  " % [
-			MatchManager.TEAM_NAMES[t], int(dmg[t]["rock"] / n), int(dmg[t]["punch"] / n), int(acc), int(pacc)]
+		txt += "%s per match: rock %d / punch %d dmg, throw acc %d%%, punch acc %d%%, %d knockdowns.  " % [
+			MatchManager.TEAM_NAMES[t], int(dmg[t]["rock"] / n), int(dmg[t]["punch"] / n), int(acc), int(pacc), kds[t] / n]
 	var hk := hist.keys()
 	hk.sort()
 	var hparts := PackedStringArray()
@@ -186,5 +207,5 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 		"text": txt,
 		"data": {"matches": results.size(), "wins": wins, "draws": draws, "avg_duration": dur / n,
 			"damage": dmg, "throws": throws, "rock_hits": rock_hits, "punches": punches, "punch_hits": punch_hits,
-			"hitbox_hist": hist, "presets": names},
+			"hitbox_hist": hist, "knockdowns": kds, "presets": names},
 	}

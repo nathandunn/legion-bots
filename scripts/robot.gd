@@ -7,10 +7,16 @@ signal died(robot: Robot)
 signal damaged(robot: Robot, amount: float, source: String, attacker: Robot, hitbox_count: int)
 signal threw(robot: Robot)
 signal punched(robot: Robot, landed: bool)
+signal knocked_down(robot: Robot, by: Robot, source: String)
 
 const SPEED := 6.0
 const MAX_HP := 200.0
-const PUNCH_DMG_PER_HITBOX := 2.5   # 1/3 of a rock hitbox
+const PUNCH_MAX_FRAC := 0.2         # best punch (PUNCH_FULL_HITBOXES parts) takes 20% of max HP
+const PUNCH_FULL_HITBOXES := 3
+const PUNCH_KNOCKDOWN_CHANCE := 0.5 # at full quality; scales down with a glancing hit
+const PUNCH_KNOCKDOWN_TIME := 1.1
+const ROCK_KNOCKDOWN_TIME := 1.8    # every rock hit floors you
+const RECOVER_GRACE := 0.4          # can't be floored again right after getting up
 const PUNCH_COOLDOWN := 0.6         # 4x faster than a throw
 const PUNCH_REACH := 1.7
 const THROW_COOLDOWN := 2.4
@@ -55,6 +61,13 @@ var label: Label3D
 var _swing := 0.0
 var _mat: StandardMaterial3D
 var _flash_tween: Tween
+var _body_tween: Tween
+var down_timer := 0.0
+var grace_timer := 0.0
+var _bar_fg: MeshInstance3D
+var _bar_quad: QuadMesh
+var _bar_mat: StandardMaterial3D
+const BAR_W := 1.3
 
 
 func _ready() -> void:
@@ -127,13 +140,41 @@ func _build_body() -> void:
 	label = Label3D.new()
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
-	label.font_size = 40
-	label.pixel_size = 0.011
+	label.font_size = 34
+	label.pixel_size = 0.009
 	label.outline_size = 8
-	label.position = Vector3(0, 2.25, 0)
+	label.position = Vector3(0, 2.45, 0)
 	label.modulate = Color.WHITE
 	add_child(label)
+
+	# HP bar: two billboarded quads, the front one shrinks from full to nothing
+	var bg := MeshInstance3D.new()
+	var bgq := QuadMesh.new()
+	bgq.size = Vector2(BAR_W + 0.06, 0.2)
+	bg.mesh = bgq
+	bg.material_override = _bar_material(Color(0.05, 0.05, 0.06, 0.85), 0)
+	bg.position = Vector3(0, 2.15, 0)
+	add_child(bg)
+	_bar_fg = MeshInstance3D.new()
+	_bar_quad = QuadMesh.new()
+	_bar_quad.size = Vector2(BAR_W, 0.14)
+	_bar_fg.mesh = _bar_quad
+	_bar_mat = _bar_material(Color(0.2, 0.9, 0.3, 1.0), 1)
+	_bar_fg.material_override = _bar_mat
+	_bar_fg.position = Vector3(0, 2.15, 0)
+	add_child(_bar_fg)
 	_update_label()
+
+
+func _bar_material(c: Color, prio: int) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.no_depth_test = true
+	m.albedo_color = c
+	m.render_priority = prio
+	return m
 
 
 func _part(part_name: String, mesh: Mesh, shape: Shape3D, pos: Vector3, mat: Material) -> MeshInstance3D:
@@ -192,13 +233,18 @@ func _capsule_shape(r: float, h: float) -> CapsuleShape3D:
 func _update_label() -> void:
 	if label == null:
 		return
+	var f := clampf(hp / MAX_HP, 0.0, 1.0)
 	if alive:
-		label.text = "%s %s\n%d" % [robot_name, personality.label(), int(ceil(hp))]
-		var f := hp / MAX_HP
-		label.modulate = Color(1.0, f, f) if f < 0.5 else Color.WHITE
+		label.text = "%s %s" % [robot_name, personality.label()]
+		label.modulate = Color.WHITE
 	else:
 		label.text = robot_name + " X"
 		label.modulate = Color(0.5, 0.5, 0.5)
+	if _bar_quad != null:
+		_bar_quad.size.x = maxf(BAR_W * f, 0.001)
+		_bar_quad.center_offset.x = -(BAR_W - BAR_W * f) * 0.5
+		_bar_mat.albedo_color = Color(0.95, 0.25, 0.2).lerp(Color(0.2, 0.9, 0.3), f)
+		_bar_fg.visible = alive and f > 0.0
 
 
 # ---------------------------------------------------------------- loop
@@ -210,6 +256,15 @@ func _physics_process(delta: float) -> void:
 	throw_timer -= delta
 	decide_timer -= delta
 	wander_timer -= delta
+	grace_timer -= delta
+	if down_timer > 0.0:
+		down_timer -= delta
+		velocity = Vector3.ZERO
+		if held_rock != null:
+			held_rock.global_position = to_global(Vector3(0.6, 0.3, 0.2))
+		if down_timer <= 0.0:
+			_get_up()
+		return
 	if decide_timer <= 0.0:
 		decide_timer = DECISION_INTERVAL
 		_decide()
@@ -219,7 +274,14 @@ func _physics_process(delta: float) -> void:
 	mv.y = 0.0
 	if mv.length_squared() > 0.001:
 		mv = mv.normalized()
-	velocity = mv * SPEED * (0.92 + 0.16 * personality.get_trait("aggression"))
+	var speed_mult := 0.92 + 0.16 * personality.get_trait("aggression")
+	if has_face_point and mv.length_squared() > 0.001:
+		# backpedalling (moving away from what you're facing) is slower - chasers catch fleers
+		var facing := face_point - global_position
+		facing.y = 0.0
+		if facing.length_squared() > 0.01 and mv.dot(facing.normalized()) < -0.3:
+			speed_mult *= 0.78
+	velocity = mv * SPEED * speed_mult
 	velocity.y = 0.0
 	var before := global_position
 	move_and_slide()
@@ -299,14 +361,16 @@ func _nearest_free_rock() -> Rock:
 func _incoming_threat() -> Dictionary:
 	var best := {}
 	var best_t := INF
-	var notice_p := 0.2 + personality.get_trait("caution") * 0.75
+	var caution := personality.get_trait("caution")
+	var notice_p := 0.2 + caution * 0.75
+	var reaction := 0.2 + (1.0 - caution) * 0.35  # seconds before the dodge starts
 	for rk: Rock in manager.rocks:
 		if rk.state != Rock.State.THROWN or rk.thrower == null or rk.thrower.team == team:
 			_rock_notice.erase(rk)
 			continue
 		if not _rock_notice.has(rk):
-			_rock_notice[rk] = rng.randf() < notice_p
-		if not _rock_notice[rk]:
+			_rock_notice[rk] = (manager.elapsed + reaction) if rng.randf() < notice_p else -1.0
+		if _rock_notice[rk] < 0.0 or manager.elapsed < _rock_notice[rk]:
 			continue
 		var v: Vector3 = rk.linear_velocity
 		v.y = 0.0
@@ -353,6 +417,7 @@ func _decide() -> void:
 	var rock_love := P.get_trait("rock_love")
 	var teamwork := P.get_trait("teamwork")
 	var patience := P.get_trait("patience")
+	var survival := P.get_trait("survival")
 
 	var enemy := _nearest_enemy()
 	var edist := _flat_dist(enemy.global_position) if enemy != null else INF
@@ -362,8 +427,24 @@ func _decide() -> void:
 	var hpf := hp / MAX_HP
 	var centroid := _team_centroid()
 	var cdist := _flat_dist(centroid)
+	var low_threshold := 0.2 + 0.4 * survival
+	var low := hpf < low_threshold
+
+	# how much sense running makes right now: none if they're far away, little if they're
+	# worse off than you, and less and less as the clock runs down
+	var flee_sense := 1.0
+	if enemy != null:
+		flee_sense = clampf(1.0 - (edist - 12.0) / 10.0, 0.1, 1.0) \
+			* clampf(0.5 + enemy.hp / MAX_HP - hpf, 0.15, 1.0) \
+			* clampf(manager.time_left / manager.MATCH_TIME + 0.35, 0.35, 1.0)
 
 	var scores := {}
+	# hurt: back off, pick up a rock on the way, throw from range
+	if low and enemy != null:
+		var s4 := 0.3 + survival * 1.5 * (1.0 - hpf / low_threshold)
+		if held_rock != null:
+			s4 *= 0.55  # armed - let throw/kite take over
+		scores["retreat"] = s4 * flee_sense
 	# dodge an incoming rock
 	if not threat.is_empty():
 		scores["dodge"] = 0.35 + caution * 1.4 * clampf(1.5 - threat["time"], 0.2, 1.0)
@@ -372,6 +453,8 @@ func _decide() -> void:
 		scores["fetch"] = 0.12 + rock_love * clampf(1.0 - rdist / 30.0, 0.15, 1.0) * (1.2 if enemy == null or edist > 6.0 else 0.5)
 		if rdist < 3.5:
 			scores["fetch"] += 0.35 * rock_love  # it's right there, grab it
+		if low:
+			scores["fetch"] += 0.4 * survival * (1.0 - hpf)  # hurt and unarmed: a rock is the way back in
 	# throw the rock we hold
 	if held_rock != null and enemy != null:
 		var in_range := edist <= THROW_RANGE
@@ -396,7 +479,7 @@ func _decide() -> void:
 			s3 += 0.4  # kite while the arm recharges
 		if held_rock == null and rock == null and edist < 6.0:
 			s3 += caution * 0.4
-		scores["kite"] = s3
+		scores["kite"] = s3 * flee_sense
 	# regroup with the pack
 	scores["regroup"] = teamwork * clampf(cdist / 14.0, 0.0, 1.0) * 0.85
 	# idle / hold position
@@ -412,7 +495,7 @@ func _decide() -> void:
 		if scores[k] > bs:
 			bs = scores[k]
 			best = k
-	if best != "fetch" and fetch_rock != null:
+	if best != "fetch" and best != "retreat" and fetch_rock != null:
 		if fetch_rock.claimed_by == self:
 			fetch_rock.claimed_by = null
 		fetch_rock = null
@@ -446,8 +529,8 @@ func _decide() -> void:
 			to = to.normalized()
 			if edist > THROW_RANGE * 0.85:
 				move_dir = to
-			elif edist < 5.0 + 6.0 * caution:
-				move_dir = -to
+			elif edist < 5.0 + 6.0 * maxf(caution, survival if low else 0.0):
+				move_dir = _keep_in_arena(-to)
 			else:
 				var strafe := to.cross(Vector3.UP) * (1.0 if int(get_instance_id()) % 2 == 0 else -1.0)
 				move_dir = strafe * (1.0 - patience) * 0.8
@@ -471,6 +554,31 @@ func _decide() -> void:
 			move_dir = _keep_in_arena(away)
 			face_point = enemy.global_position
 			has_face_point = true
+		"retreat":
+			var away := global_position - enemy.global_position
+			away.y = 0.0
+			away = away.normalized()
+			face_point = enemy.global_position
+			has_face_point = true
+			var to_rock := Vector3.ZERO
+			if held_rock == null and rock != null and rdist < 18.0:
+				to_rock = rock.global_position - global_position
+				to_rock.y = 0.0
+			if to_rock.length_squared() > 0.001 and to_rock.normalized().dot(away) > -0.35:
+				# the rock is not behind the enemy - go get it
+				fetch_rock = rock
+				rock.claimed_by = self
+				if to_rock.length() <= PICKUP_RANGE:
+					_pickup(rock)
+					move_dir = Vector3.ZERO
+				else:
+					move_dir = to_rock.normalized()
+			else:
+				var to_c := centroid - global_position
+				to_c.y = 0.0
+				if to_c.length() > 3.0:
+					away = (away + to_c.normalized() * 0.5 * teamwork).normalized()
+				move_dir = _keep_in_arena(away)
 		"regroup":
 			var to := centroid - global_position
 			to.y = 0.0
@@ -551,7 +659,10 @@ func _punch() -> void:
 	var landed := false
 	for r in hits:
 		landed = true
-		r.take_damage(PUNCH_DMG_PER_HITBOX * hits[r], "punch", self, hits[r])
+		var quality := minf(float(hits[r]), float(PUNCH_FULL_HITBOXES)) / float(PUNCH_FULL_HITBOXES)
+		r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality, "punch", self, hits[r])
+		if rng.randf() < PUNCH_KNOCKDOWN_CHANCE * quality:
+			r.knock_down(PUNCH_KNOCKDOWN_TIME, self, "punch")
 	punched.emit(self, landed)
 
 
@@ -565,6 +676,34 @@ func take_damage(amount: float, source: String, attacker: Robot, hitbox_count: i
 		hp = 0.0
 		_die()
 	_update_label()
+
+
+func knock_down(duration: float, by: Robot, source: String) -> void:
+	if not alive or grace_timer > 0.0:
+		return
+	var was_up := down_timer <= 0.0
+	down_timer = maxf(down_timer, duration)
+	action = "down"
+	move_dir = Vector3.ZERO
+	if was_up:
+		if _body_tween != null and _body_tween.is_valid():
+			_body_tween.kill()
+		_body_tween = create_tween().set_parallel(true)
+		_body_tween.tween_property(body_root, "rotation:x", -PI * 0.5, 0.15).set_ease(Tween.EASE_IN)
+		_body_tween.tween_property(body_root, "position:y", 0.35, 0.15)
+		knocked_down.emit(self, by, source)
+
+
+func _get_up() -> void:
+	down_timer = 0.0
+	grace_timer = RECOVER_GRACE
+	action = "wander"
+	decide_timer = 0.1
+	if _body_tween != null and _body_tween.is_valid():
+		_body_tween.kill()
+	_body_tween = create_tween().set_parallel(true)
+	_body_tween.tween_property(body_root, "rotation:x", 0.0, 0.3)
+	_body_tween.tween_property(body_root, "position:y", 0.0, 0.3)
 
 
 func _flash() -> void:
@@ -592,6 +731,8 @@ func _die() -> void:
 	for hb in hitboxes:
 		hb.collision_layer = 0
 	fist.monitoring = false
+	if _body_tween != null and _body_tween.is_valid():
+		_body_tween.kill()
 	body_root.rotation.x = -PI * 0.5
 	body_root.position.y = 0.35
 	if _flash_tween != null and _flash_tween.is_valid():

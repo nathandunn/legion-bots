@@ -3,7 +3,7 @@ extends RefCounted
 ## A bag of 0..1 traits that shape a robot's utility scores.
 ## Deliberately flat so it can be swapped for the sim-core schema later.
 
-const TRAITS: Array[String] = ["aggression", "caution", "rock_love", "accuracy", "teamwork", "patience"]
+const TRAITS: Array[String] = ["aggression", "caution", "rock_love", "accuracy", "teamwork", "patience", "survival"]
 
 const TRAIT_HELP := {
 	"aggression": "Chase, punch, throw early",
@@ -12,14 +12,15 @@ const TRAIT_HELP := {
 	"accuracy": "Throw precision + lead",
 	"teamwork": "Stick with the pack",
 	"patience": "Hold position, wait for shots",
+	"survival": "When hurt: back off, grab a rock, throw from range",
 }
 
 const PRESETS := {
-	"Brawler":   {"aggression": 0.95, "caution": 0.15, "rock_love": 0.15, "accuracy": 0.50, "teamwork": 0.40, "patience": 0.10},
-	"Slinger":   {"aggression": 0.70, "caution": 0.50, "rock_love": 0.95, "accuracy": 0.85, "teamwork": 0.40, "patience": 0.50},
-	"Coward":    {"aggression": 0.25, "caution": 0.95, "rock_love": 0.60, "accuracy": 0.50, "teamwork": 0.60, "patience": 0.80},
-	"Tactician": {"aggression": 0.55, "caution": 0.60, "rock_love": 0.70, "accuracy": 0.80, "teamwork": 0.90, "patience": 0.70},
-	"Balanced":  {"aggression": 0.50, "caution": 0.50, "rock_love": 0.50, "accuracy": 0.50, "teamwork": 0.50, "patience": 0.50},
+	"Brawler":   {"aggression": 0.95, "caution": 0.15, "rock_love": 0.15, "accuracy": 0.50, "teamwork": 0.40, "patience": 0.10, "survival": 0.10},
+	"Slinger":   {"aggression": 0.70, "caution": 0.50, "rock_love": 0.95, "accuracy": 0.85, "teamwork": 0.40, "patience": 0.50, "survival": 0.55},
+	"Coward":    {"aggression": 0.25, "caution": 0.95, "rock_love": 0.60, "accuracy": 0.50, "teamwork": 0.60, "patience": 0.80, "survival": 0.95},
+	"Tactician": {"aggression": 0.55, "caution": 0.60, "rock_love": 0.70, "accuracy": 0.80, "teamwork": 0.90, "patience": 0.70, "survival": 0.70},
+	"Balanced":  {"aggression": 0.50, "caution": 0.50, "rock_love": 0.50, "accuracy": 0.50, "teamwork": 0.50, "patience": 0.50, "survival": 0.50},
 }
 
 var traits: Dictionary = {}

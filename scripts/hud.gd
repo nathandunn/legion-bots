@@ -1,136 +1,207 @@
 class_name Hud
 extends CanvasLayer
-## All UI built in code: scoreboard, speed, team personality panel, results.
+## All UI built in code: scoreboard, controls, team setup overlay, results overlay.
+## Lays itself out for phone widths too (rows wrap, overlays shrink to the screen).
 
 signal new_match_requested
 signal batch_requested(n: int)
 signal speed_changed(scale: float)
 
+const PRESET_LIST := ["Balanced", "Brawler", "Slinger", "Coward", "Tactician", "Random", "Custom"]
+
 var manager: MatchManager
 var timer_label: Label
 var team_labels: Array[Label] = []
 var live_label: Label
-var result_label: Label
-var panel: PanelContainer
+var status_label: Label
+var teams_overlay: Control
+var teams_scroll: ScrollContainer
+var results_overlay: Control
+var results_scroll: ScrollContainer
+var results_box: VBoxContainer
+var results_title: Label
+var results_countdown: Label
 var preset_buttons: Array[OptionButton] = []
 var sliders := [{}, {}]
 var slider_vals := [{}, {}]
 var speed_buttons: Array[Button] = []
+var teams_btn: Button
+var live_btn: Button
+var results_btn: Button
+var last_result := {}
 var _updating := false
 var _tick := 0.0
-
-const PRESET_LIST := ["Balanced", "Brawler", "Slinger", "Coward", "Tactician", "Random", "Custom"]
+var _root: Control
 
 
 func setup(m: MatchManager) -> void:
 	manager = m
 	var theme := Theme.new()
 	theme.default_font_size = 16
-	var root := MarginContainer.new()
-	root.theme = theme
-	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_theme_constant_override("margin_left", 10)
-	root.add_theme_constant_override("margin_right", 10)
-	root.add_theme_constant_override("margin_top", 8)
-	root.add_theme_constant_override("margin_bottom", 8)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(root)
+	_root = Control.new()
+	_root.theme = theme
+	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_root)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for side in ["margin_left", "margin_right"]:
+		margin.add_theme_constant_override(side, 10)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_bottom", 8)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(margin)
 
 	var vbox := VBoxContainer.new()
 	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(vbox)
+	margin.add_child(vbox)
 
-	# ---- top bar
-	var top := HBoxContainer.new()
-	top.add_theme_constant_override("separation", 12)
-	vbox.add_child(top)
-
+	# ---- row 1: clock + team status (wraps on phones)
+	var row1 := HFlowContainer.new()
+	row1.add_theme_constant_override("h_separation", 14)
+	vbox.add_child(row1)
 	timer_label = Label.new()
 	timer_label.add_theme_font_size_override("font_size", 26)
-	timer_label.text = "3:00"
-	top.add_child(timer_label)
-
+	timer_label.text = "2:30"
+	row1.add_child(timer_label)
 	for t in 2:
 		var l := Label.new()
 		l.add_theme_color_override("font_color", MatchManager.TEAM_COLORS[t].lightened(0.2))
-		l.add_theme_font_size_override("font_size", 20)
-		top.add_child(l)
+		l.add_theme_font_size_override("font_size", 19)
+		row1.add_child(l)
 		team_labels.append(l)
 
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	top.add_child(spacer)
-
+	# ---- row 2: controls (wraps on phones)
+	var row2 := HFlowContainer.new()
+	row2.add_theme_constant_override("h_separation", 6)
+	vbox.add_child(row2)
 	for s in [1, 2, 4, 8]:
 		var b := Button.new()
 		b.text = "%dx" % s
 		b.toggle_mode = true
 		b.button_pressed = (s == 1)
 		b.pressed.connect(func(): _set_speed(float(s)))
-		top.add_child(b)
+		row2.add_child(b)
 		speed_buttons.append(b)
-
-	var teams_btn := Button.new()
-	teams_btn.text = "Teams"
+	teams_btn = Button.new()
+	teams_btn.text = "Teams / setup"
 	teams_btn.toggle_mode = true
-	teams_btn.toggled.connect(func(on: bool): panel.visible = on)
-	top.add_child(teams_btn)
-
+	teams_btn.toggled.connect(func(on: bool): teams_overlay.visible = on; if on: results_overlay.visible = false)
+	row2.add_child(teams_btn)
+	live_btn = Button.new()
+	live_btn.text = "Live list"
+	live_btn.toggle_mode = true
+	live_btn.toggled.connect(func(on: bool): live_label.visible = on)
+	row2.add_child(live_btn)
+	results_btn = Button.new()
+	results_btn.text = "Last results"
+	results_btn.disabled = true
+	results_btn.pressed.connect(func(): if not last_result.is_empty(): show_result(last_result))
+	row2.add_child(results_btn)
 	var new_btn := Button.new()
 	new_btn.text = "New match"
-	new_btn.pressed.connect(func(): new_match_requested.emit())
-	top.add_child(new_btn)
-
+	new_btn.pressed.connect(func(): _close_overlays(); new_match_requested.emit())
+	row2.add_child(new_btn)
 	var batch_btn := Button.new()
 	batch_btn.text = "Batch x10"
-	batch_btn.pressed.connect(func(): batch_requested.emit(10))
-	top.add_child(batch_btn)
+	batch_btn.pressed.connect(func(): _close_overlays(); batch_requested.emit(10))
+	row2.add_child(batch_btn)
 
-	# ---- middle: live list left, team panel right
-	var mid := HBoxContainer.new()
-	mid.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(mid)
-
+	# ---- live list (toggle)
 	live_label = Label.new()
 	live_label.add_theme_font_size_override("font_size", 13)
 	live_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.9))
-	live_label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	live_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mid.add_child(live_label)
+	live_label.visible = false
+	vbox.add_child(live_label)
 
-	var mid_spacer := Control.new()
-	mid_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mid_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mid.add_child(mid_spacer)
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(spacer)
 
-	panel = PanelContainer.new()
-	panel.visible = false
-	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	mid.add_child(panel)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(360, 0)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	panel.add_child(scroll)
-	var pbox := VBoxContainer.new()
-	pbox.add_theme_constant_override("separation", 6)
-	scroll.add_child(pbox)
-	var hint := Label.new()
-	hint.text = "Applies to the next match"
-	hint.add_theme_font_size_override("font_size", 12)
-	pbox.add_child(hint)
-	for t in 2:
-		pbox.add_child(_build_team_panel(t))
+	# ---- bottom status line
+	status_label = Label.new()
+	status_label.add_theme_font_size_override("font_size", 14)
+	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vbox.add_child(status_label)
 
-	# ---- bottom result
-	result_label = Label.new()
-	result_label.add_theme_font_size_override("font_size", 15)
-	result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	result_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_child(result_label)
-
+	_build_teams_overlay()
+	_build_results_overlay()
 	_refresh_sliders()
+	get_tree().root.size_changed.connect(_relayout)
+	_relayout()
+
+
+# ---------------------------------------------------------------- overlays
+
+func _overlay(title_text: String) -> Array:
+	## Returns [overlay_control, scroll, content_vbox, title_label]
+	var ov := Control.new()
+	ov.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ov.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ov.visible = false
+	_root.add_child(ov)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ov.add_child(center)
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.08, 0.09, 0.12, 0.96)
+	sb.border_color = Color(0.35, 0.38, 0.45)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(12)
+	panel.add_theme_stylebox_override("panel", sb)
+	center.add_child(panel)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 8)
+	panel.add_child(outer)
+	var head := HBoxContainer.new()
+	outer.add_child(head)
+	var title := Label.new()
+	title.text = title_text
+	title.add_theme_font_size_override("font_size", 20)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	head.add_child(title)
+	var close := Button.new()
+	close.text = "Close"
+	close.pressed.connect(func(): ov.visible = false; teams_btn.set_pressed_no_signal(false))
+	head.add_child(close)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	outer.add_child(scroll)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 6)
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(content)
+	return [ov, scroll, content, title]
+
+
+func _build_teams_overlay() -> void:
+	var parts := _overlay("Teams")
+	teams_overlay = parts[0]
+	teams_scroll = parts[1]
+	var content: VBoxContainer = parts[2]
+	var hint := Label.new()
+	hint.text = "Pick a preset or drag the sliders, then Start match. Each robot gets the team personality with a little jitter."
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.add_theme_font_size_override("font_size", 13)
+	content.add_child(hint)
+	var teams_row := HFlowContainer.new()
+	teams_row.add_theme_constant_override("h_separation", 24)
+	content.add_child(teams_row)
+	for t in 2:
+		teams_row.add_child(_build_team_panel(t))
+	var start := Button.new()
+	start.text = "Start match with these teams"
+	start.add_theme_font_size_override("font_size", 18)
+	start.pressed.connect(func(): _close_overlays(); new_match_requested.emit())
+	content.add_child(start)
 
 
 func _build_team_panel(t: int) -> Control:
@@ -160,18 +231,50 @@ func _build_team_panel(t: int) -> Control:
 		s.min_value = 0.0
 		s.max_value = 1.0
 		s.step = 0.05
-		s.custom_minimum_size.x = 130
+		s.custom_minimum_size = Vector2(150, 28)
 		s.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		s.value_changed.connect(func(v: float): _on_slider(t, trait_name, v))
 		row.add_child(s)
 		var vl := Label.new()
-		vl.custom_minimum_size.x = 34
+		vl.custom_minimum_size.x = 36
 		row.add_child(vl)
 		box.add_child(row)
 		sliders[t][trait_name] = s
 		slider_vals[t][trait_name] = vl
 	return box
 
+
+func _build_results_overlay() -> void:
+	var parts := _overlay("Results")
+	results_overlay = parts[0]
+	results_scroll = parts[1]
+	results_box = parts[2]
+	results_title = parts[3]
+	results_countdown = Label.new()
+	results_countdown.add_theme_font_size_override("font_size", 13)
+	results_countdown.add_theme_color_override("font_color", Color(0.75, 0.75, 0.8))
+
+
+func on_match_started() -> void:
+	results_overlay.visible = false
+	set_countdown(0.0)
+
+
+func _close_overlays() -> void:
+	teams_overlay.visible = false
+	results_overlay.visible = false
+	teams_btn.set_pressed_no_signal(false)
+
+
+func _relayout() -> void:
+	var vs := get_viewport().get_visible_rect().size
+	var w := vs.x
+	var h := vs.y
+	teams_scroll.custom_minimum_size = Vector2(minf(820.0, w - 40.0), minf(470.0, h - 110.0))
+	results_scroll.custom_minimum_size = Vector2(minf(900.0, w - 40.0), minf(600.0, h - 110.0))
+
+
+# ---------------------------------------------------------------- team setup
 
 func _on_preset(t: int, preset_name: String) -> void:
 	if preset_name == "Custom":
@@ -211,6 +314,8 @@ func _set_speed(s: float) -> void:
 	speed_changed.emit(s)
 
 
+# ---------------------------------------------------------------- live
+
 func _process(delta: float) -> void:
 	_tick -= delta
 	if _tick > 0.0 or manager == null:
@@ -219,24 +324,126 @@ func _process(delta: float) -> void:
 	var tl := manager.time_left
 	timer_label.text = "%d:%02d" % [int(tl) / 60, int(tl) % 60]
 	for t in 2:
-		team_labels[t].text = "%s %d/%d  HP %d" % [MatchManager.TEAM_NAMES[t], manager.alive_count(t), MatchManager.TEAM_SIZE, int(manager.team_hp(t))]
-	var lines := PackedStringArray()
-	for r in manager.robots:
-		var rk := " [rock]" if r.held_rock != null else ""
-		lines.append("%s %3d %s%s" % [r.robot_name, int(r.hp), r.action, rk])
-	live_label.text = "\n".join(lines)
+		team_labels[t].text = "%s %d/%d  HP %d%%" % [MatchManager.TEAM_NAMES[t], manager.alive_count(t), MatchManager.TEAM_SIZE,
+			int(round(100.0 * manager.team_hp(t) / (Robot.MAX_HP * MatchManager.TEAM_SIZE)))]
+	if live_label.visible:
+		var lines := PackedStringArray()
+		for r in manager.robots:
+			var rk := " [rock]" if r.held_rock != null else ""
+			lines.append("%s %3d%% %s%s" % [r.robot_name, int(round(100.0 * r.hp / Robot.MAX_HP)), r.action, rk])
+		live_label.text = "\n".join(lines)
+
+
+func set_status(text: String) -> void:
+	status_label.text = text
+
+
+func set_countdown(seconds: float) -> void:
+	if seconds > 0.0:
+		results_countdown.text = "Next match in %d s  (Close to keep reading; New match to go now)" % int(ceil(seconds))
+	else:
+		results_countdown.text = ""
+
+
+# ---------------------------------------------------------------- results
+
+func _clear_results() -> void:
+	for c in results_box.get_children():
+		results_box.remove_child(c)
+		if c != results_countdown:
+			c.queue_free()
+
+
+func _cell(text: String, bold := false, color := Color.WHITE, size := 14) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", color)
+	if bold:
+		l.add_theme_color_override("font_color", color.lightened(0.15))
+	return l
+
+
+static func _pct(hits: int, tries: int) -> String:
+	return "%d%%" % int(round(100.0 * hits / tries)) if tries > 0 else "-"
 
 
 func show_result(res: Dictionary) -> void:
+	last_result = res
+	results_btn.disabled = false
+	_clear_results()
+	teams_overlay.visible = false
+	teams_btn.set_pressed_no_signal(false)
 	var s: Dictionary = res["stats"]
-	var txt := "Match %d: %s wins by %s in %ds  |  " % [res["match"], res["winner_name"], res["reason"], int(res["duration"])]
+	var wcol: Color = MatchManager.TEAM_COLORS[res["winner"]].lightened(0.25) if res["winner"] >= 0 else Color.WHITE
+	results_title.text = "Match %d - %s wins by %s in %d s" % [res["match"], res["winner_name"], res["reason"], int(res["duration"])]
+	results_title.add_theme_color_override("font_color", wcol)
+	results_box.add_child(results_countdown)
+
+	# team table
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 18)
+	grid.add_theme_constant_override("v_separation", 3)
+	results_box.add_child(grid)
+	grid.add_child(_cell(""))
 	for t in 2:
-		txt += "%s(%s) rock %d / punch %d dmg, %d throws (%d hit), %d punches (%d hit)   " % [
-			MatchManager.TEAM_NAMES[t], res["presets"][t],
-			int(s["damage"][t]["rock"]), int(s["damage"][t]["punch"]),
-			s["throws"][t], s["rock_hits"][t], s["punches"][t], s["punch_hits"][t]]
-	result_label.text = txt
+		grid.add_child(_cell("%s (%s)" % [MatchManager.TEAM_NAMES[t], res["presets"][t]], true, MatchManager.TEAM_COLORS[t].lightened(0.2), 15))
+	var rows := [
+		["Alive", func(t): return "%d / %d" % [res["alive"][t], MatchManager.TEAM_SIZE]],
+		["Team HP left", func(t): return "%d%%" % int(round(100.0 * res["hp"][t] / (Robot.MAX_HP * MatchManager.TEAM_SIZE)))],
+		["Throws / hits", func(t): return "%d / %d  (%s)" % [s["throws"][t], s["rock_hits"][t], _pct(s["rock_hits"][t], s["throws"][t])]],
+		["Punches / hits", func(t): return "%d / %d  (%s)" % [s["punches"][t], s["punch_hits"][t], _pct(s["punch_hits"][t], s["punches"][t])]],
+		["Rock damage", func(t): return "%d" % int(s["damage"][t]["rock"])],
+		["Punch damage", func(t): return "%d" % int(s["damage"][t]["punch"])],
+		["Knockdowns dealt", func(t): return "%d" % s["knockdowns"][t]],
+		["Kills", func(t): return "%d" % s["kills"][t]],
+	]
+	for row in rows:
+		grid.add_child(_cell(row[0], false, Color(0.8, 0.8, 0.85)))
+		for t in 2:
+			grid.add_child(_cell(row[1].call(t)))
+	var hk: Array = s["hitbox_hist"].keys()
+	hk.sort()
+	var hparts := PackedStringArray()
+	for k in hk:
+		hparts.append("%s part%s: %d" % [str(k), "" if int(k) == 1 else "s", s["hitbox_hist"][k]])
+	if hparts.size() > 0:
+		results_box.add_child(_cell("Rock hits by parts struck - " + ", ".join(hparts), false, Color(0.8, 0.8, 0.85), 13))
+
+	# per-robot table
+	results_box.add_child(_cell("Robots", true, Color.WHITE, 16))
+	var rg := GridContainer.new()
+	rg.columns = 9
+	rg.add_theme_constant_override("h_separation", 14)
+	rg.add_theme_constant_override("v_separation", 2)
+	results_box.add_child(rg)
+	for hdr in ["Robot", "Type", "Damage", "Rock", "Punch", "Throw acc", "Punch acc", "KD", "Kills / HP"]:
+		rg.add_child(_cell(hdr, false, Color(0.75, 0.75, 0.8), 13))
+	for r in res["robots"]:
+		var col: Color = MatchManager.TEAM_COLORS[r["team"]].lightened(0.25)
+		rg.add_child(_cell(r["name"], true, col))
+		rg.add_child(_cell(r["preset"]))
+		rg.add_child(_cell("%d" % int(r["dmg_rock"] + r["dmg_punch"])))
+		rg.add_child(_cell("%d" % int(r["dmg_rock"])))
+		rg.add_child(_cell("%d" % int(r["dmg_punch"])))
+		rg.add_child(_cell("%d/%d %s" % [r["rock_hits"], r["throws"], _pct(r["rock_hits"], r["throws"])]))
+		rg.add_child(_cell("%d/%d %s" % [r["punch_hits"], r["punches"], _pct(r["punch_hits"], r["punches"])]))
+		rg.add_child(_cell("%d" % r["knockdowns"]))
+		rg.add_child(_cell("%d / %s" % [r["kills"], ("%d%%" % int(round(100.0 * r["hp"] / Robot.MAX_HP))) if r["alive"] else "dead"]))
+
+	results_overlay.visible = true
+	results_scroll.scroll_vertical = 0
+	set_status("")
 
 
 func show_batch(summary: Dictionary) -> void:
-	result_label.text = summary["text"]
+	_clear_results()
+	results_title.text = "Batch results"
+	results_title.add_theme_color_override("font_color", Color.WHITE)
+	results_box.add_child(results_countdown)
+	var l := _cell(summary["text"])
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size.x = minf(820.0, get_viewport().get_visible_rect().size.x - 70.0)
+	results_box.add_child(l)
+	results_overlay.visible = true
