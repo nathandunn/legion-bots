@@ -15,7 +15,7 @@ Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
 | rocks | 5 on the field (1 per 2 robots), scattered, reusable — thrown rocks land and can be picked up again. Three sizes (1.2 / 2 / 3.2 kg); heavier ones leave the hand slower but carry more momentum |
 | hitboxes | head, torso, 2 arms, 2 legs. Hit quality = parts struck / "full" parts |
 | rock hit | physics decides: damage = 50 % of max HP × parts-struck quality × (kinetic energy of the rock **relative to the robot** / a full-speed 2 kg throw). Walking into a rock hurts more than being clipped while running with it. **Friendly fire is on.** Knockdown impulse is the rock's momentum; down time 0.7–2 s by energy |
-| punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. A punch has a 0.22 s wind-up: a target who can see it coming sidesteps with chance 0.15 + 0.6·caution, and the swing itself lands with chance 0.55 + 0.45·accuracy. Every landed punch sends the target sprawling as a ragdoll (0.55 s); with **chance 50 % × hit quality** it's a proper floor (1.1 s) |
+| punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. A punch has a 0.22 s wind-up: a target who can see it coming sidesteps with chance 0.15 + 0.6·caution, and the swing itself lands with chance 0.55 + 0.45·`ACCURACY`. Accuracy (0.7) is the same for everyone — it is not a personality trait. Every landed punch sends the target sprawling as a ragdoll (0.55 s); with **chance 50 % × hit quality** it's a proper floor (1.1 s) |
 | knockdown | the robot becomes a **ragdoll** (six pinned rigid bodies) and gets shoved away from the hit; it can't act, and its hitboxes drop below the fist box so it can't be punched while down; 0.4 s grace after getting up. Dead robots stay ragdolls |
 | HP | 200, shown as a bar over each robot (green → red) |
 | eyes | robots see ~190° in front of them and not through cover. A rock they can see coming is spotted 92 % of the time, and after 0.08–0.28 s (quicker when cautious) they drop everything and sprint out of its path; a rock from behind or over a block is never seen. Throws need the target in view too |
@@ -24,7 +24,7 @@ All of these are `const`s at the top of `scripts/robot.gd` and `scripts/rock.gd`
 
 ## Personalities
 
-Eight 0–1 traits (`scripts/personality.gd`): `aggression`, `caution`, `rock_love`, `accuracy`,
+Seven 0–1 traits (`scripts/personality.gd`): `aggression`, `caution`, `rock_love`,
 `teamwork`, `patience`, `survival` (when hurt: back off, grab a rock on the way, throw from range —
 fades when the enemy is far or worse off than you), `protect` (guard your mates: when one is floored or
 has an enemy within 4 m, go and get between them and hit the attacker — or, if you don't box, keep
@@ -44,9 +44,13 @@ Doctrine that falls out of the traits:
 - Stuck behind a block or a body (pressed against it, or inching back and forth for 1.5 s without
   getting anywhere) → a random heading 60–150° off, held for 0.5–1.1 s.
 - Throws pick the nearest enemy that is standing and has a clear line (raycast against cover); a floored
-  enemy is aimed at low and only if nobody is up.
+  enemy is aimed at low and only if nobody is up. **Nobody throws through a mate**: a teammate inside a
+  cone around the flight line (0.9 m at the hand widening ~12° out to the target and 12 m past it, wider
+  for wild throwers, for mates on the move, and right in front of the hand; anyone within 1.7 m of the
+  thrower) blocks the throw, and the thrower sidesteps to open the lane instead. Friendly fire still
+  happens when a mate runs into a rock already in the air.
 - Seeing an incoming rock beats every other urge: the dodge is a sideways sprint (with a step back if there is time and the robot is cautious).
-- The winning team jogs to a line in front of the centre block, dances for two seconds on one shared beat, then shares out the fallen enemies and squats over each of them four times. The results panel opens as the dance starts, off to one side (right half in landscape, lower part in portrait) so you can watch; Close it to see everything.
+- The winning team jogs to a line in front of the centre block, dances for two seconds on one shared beat, then shares out the fallen enemies and, for each, squats over him four times and then stands back a pace and relieves himself on the body (a puddle spreads and stays). The results panel opens as the dance starts, off to one side (right half in landscape, lower part in portrait) so you can watch; Close it to see everything.
 
 The brain (`Robot._decide`) is a small utility AI: every 0.15 s it scores
 `dodge / fetch / throw / punch / kite / retreat / regroup / wander` from traits + situation and takes the best

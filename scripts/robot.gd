@@ -21,6 +21,7 @@ const DANCE_TIME := 2.0
 const TEABAG_PERIOD := 0.55        # one squat
 const TEABAG_REPS := 4             # squats per corpse
 const TEABAG_DEPTH := 0.62
+const PEE_TIME := 2.6              # after the squats, the final insult
 const RECOVER_GRACE := 0.4          # can't be floored again right after getting up
 const PUNCH_COOLDOWN := 0.6         # 4x faster than a throw
 const PUNCH_REACH := 1.7
@@ -28,6 +29,7 @@ const PUNCH_WINDUP := 0.22          # seen coming: the wind-up before the fist l
 const THROW_COOLDOWN := 2.4
 const THROW_RANGE := 20.0
 const PICKUP_RANGE := 1.5
+const ACCURACY := 0.7               # the same hands for everyone: throw error/lead and punch landing
 const DECISION_INTERVAL := 0.15
 const FOV_COS := -0.09              # cos of the half field of view (~95 degrees each side)
 const EYE_HEIGHT := 1.75
@@ -78,6 +80,9 @@ var teabag_timer := 0.0
 var _walk_stuck := 0.0
 var _walk_detour := 0.0
 var _walk_detour_dir := Vector3.ZERO
+var _pee_timer := 0.0
+var _stream: CPUParticles3D = null
+var _puddle: MeshInstance3D = null
 
 var hitboxes: Array[Area3D] = []
 var fist: Area3D
@@ -457,6 +462,47 @@ func _throw_dist() -> float:
 	return clampf(7.0 + 8.0 * (1.0 - aggression) + 6.0 * caution, 7.0, THROW_RANGE)
 
 
+## Is one of ours standing in the way of a throw at this point? A mate within a margin of the
+## flight line (bigger for wild throwers, who know their rocks wander) between the hand and the target.
+func _lane_blocked(target_pos: Vector3) -> bool:
+	var origin := global_position
+	var line := target_pos - origin
+	line.y = 0.0
+	var len := line.length()
+	if len < 0.5:
+		return false
+	var dirv := line / len
+	var margin := 0.9 + 0.8 * (1.0 - ACCURACY)
+	var speed := held_rock.throw_speed() if held_rock != null else 18.0
+	for m: Robot in manager.alive_robots():
+		if m.team != team or m == self:
+			continue
+		# where the mate will be when the rock gets there, not where he is now
+		var rel := m.global_position - origin
+		rel.y = 0.0
+		var t := clampf(rel.dot(dirv), 0.0, len) / speed
+		rel += m.velocity * t
+		rel.y = 0.0
+		if rel.length() < 1.7:
+			return true  # a mate at your elbow: the rock leaves the hand straight into him
+		var along := rel.dot(dirv)
+		# a miss carries on past the target: mind the mates behind him too
+		if along < -0.5 or along > len + 12.0:
+			continue
+		var lateral := (rel - dirv * along).length()
+		# a cone, not a tube: the further the rock flies the more it wanders
+		var mg := maxf(margin, 0.9 + minf(along, len) * 0.21) if along <= len else margin * 1.3
+		if along < 3.0:
+			mg += 0.6  # splash radius plus a body, right in front of the hand
+		if m.velocity.length() > 2.0:
+			mg += 0.8  # he's on the move and may well run into it
+		if m.down_timer > 0.0:
+			mg *= 0.7
+		if lateral < mg:
+			return true
+	return false
+
+
 ## Who to throw at: the nearest enemy that is on its feet and not behind cover.
 ## Falls back to a floored enemy (aimed low) only if nobody is standing.
 func _throw_target() -> Robot:
@@ -483,6 +529,8 @@ func _throw_target() -> Robot:
 			continue  # can't aim at what you aren't looking at
 		if not _clear_line(origin, r.global_position + Vector3(0, aim_y, 0)):
 			continue
+		if _lane_blocked(r.global_position):
+			continue  # one of ours is in the way - not through him
 		var cost := d + (12.0 if r.down_timer > 0.0 else 0.0)
 		# the protective aim first at an enemy who is on one of ours
 		var protect := personality.get_trait("protect")
@@ -827,7 +875,15 @@ func _decide() -> void:
 			var to := enemy.global_position - global_position
 			to.y = 0.0
 			to = to.normalized()
-			if edist > _throw_dist():
+			if tgt == null and edist <= THROW_RANGE and _lane_blocked(enemy.global_position):
+				# a mate is in the lane: sidestep to open it (away from the mate's side)
+				var side := to.cross(Vector3.UP)
+				var mate_side := 0.0
+				for m: Robot in manager.alive_robots():
+					if m.team == team and m != self and _flat_dist(m.global_position) < edist:
+						mate_side += (m.global_position - global_position).dot(side)
+				move_dir = _keep_in_arena(side * (-1.0 if mate_side > 0.0 else 1.0))
+			elif edist > _throw_dist():
 				move_dir = to  # closer for a better shot
 			elif edist < 5.0 + 6.0 * maxf(caution, survival if low else 0.0):
 				move_dir = _keep_in_arena(-to)
@@ -890,8 +946,8 @@ func _decide() -> void:
 			face_point = foe.global_position
 			has_face_point = true
 			var fd := _flat_dist(foe.global_position)
-			if held_rock != null and throw_timer <= 0.0 and fd > 3.0 and fd <= THROW_RANGE and _can_see(foe.global_position + Vector3(0, 1.1, 0)):
-				_throw_at(foe)  # the attacker gets the rock, whoever is nearer
+			if held_rock != null and throw_timer <= 0.0 and fd > 3.0 and fd <= THROW_RANGE and _can_see(foe.global_position + Vector3(0, 1.1, 0)) and not _lane_blocked(foe.global_position):
+				_throw_at(foe)  # the attacker gets the rock, whoever is nearer - unless the mate is in the way
 			if _will_box(fd):
 				# stand between the attacker and the mate, then close and hit
 				var between: Vector3 = mate.global_position + (foe.global_position - mate.global_position).normalized() * 1.3
@@ -966,7 +1022,7 @@ func _pickup(rock: Rock) -> void:
 func _throw_at(target: Robot) -> void:
 	if held_rock == null:
 		return
-	var accuracy := personality.get_trait("accuracy")
+	var accuracy := ACCURACY
 	var origin := to_global(HAND_POS)
 	var speed := held_rock.throw_speed()
 	var tpos := target.global_position + Vector3(0, 0.35 if target.down_timer > 0.0 else 1.1, 0)
@@ -1015,7 +1071,7 @@ func _in_fist() -> Dictionary:
 
 
 func _punch_land() -> void:
-	var accuracy := personality.get_trait("accuracy")
+	var accuracy := ACCURACY
 	var landed := false
 	var hits := _in_fist()
 	for r in hits:
@@ -1156,6 +1212,7 @@ func cheer(spot: Vector3, corpses: Array[Robot]) -> void:
 	teabag_targets = corpses
 	teabag_idx = 0
 	teabag_timer = 0.0
+	_pee_timer = 0.0
 	_cheer_phase = rng.randf_range(0.0, TAU)
 	if held_rock != null:
 		held_rock.drop()
@@ -1228,6 +1285,9 @@ func _teabag(delta: float) -> void:
 	if victim == null or not is_instance_valid(victim):
 		teabag_idx += 1
 		return
+	if _pee_timer > 0.0:
+		_pee(delta, victim)
+		return
 	var spot := victim.corpse_position()
 	if not _walk_to(spot, delta, 0.3):
 		return
@@ -1250,11 +1310,104 @@ func _teabag(delta: float) -> void:
 	arm_r.rotation.z = 0.3 * s
 	if teabag_timer >= TEABAG_PERIOD * TEABAG_REPS:
 		teabag_timer = 0.0
-		teabag_idx += 1
 		_reset_pose()
+		_pee_timer = PEE_TIME  # squats done - now the final insult
+
+
+## Stand back a pace from the body, hand at the hip, and relieve oneself upon it; a puddle
+## spreads under the corpse and stays there. Then on to the next.
+func _pee(delta: float, victim: Robot) -> void:
+	var spot := victim.corpse_position()
+	var away := global_position - spot
+	away.y = 0.0
+	away = away.normalized() if away.length_squared() > 0.01 else Vector3(0, 0, 1)
+	var stand := spot + away * 1.1
+	if _pee_timer == PEE_TIME:
+		if not _walk_to(stand, delta, 0.25):
+			return
+		var fp := spot
+		fp.y = 0.0
+		look_at(fp, Vector3.UP)
+		_reset_pose()
+		_start_stream(victim)
+	_pee_timer -= delta
+	# the pose: a little lean back, hips forward, one hand down in front, the other on the hip
+	body_root.rotation.x = -0.12
+	body_root.position.y = 0.0
+	arm_r.rotation.x = -0.55
+	arm_r.rotation.z = 0.25
+	arm_l.rotation.z = -0.7
+	arm_l.rotation.x = 0.3
+	if _puddle != null and is_instance_valid(_puddle):
+		var f := 1.0 - _pee_timer / PEE_TIME
+		_puddle.scale = Vector3(0.15 + 0.85 * f, 1.0, 0.15 + 0.85 * f)
+	if _pee_timer <= 0.0:
+		_pee_timer = 0.0
+		_stop_stream()
+		_reset_pose()
+		teabag_idx += 1
+
+
+func _start_stream(victim: Robot) -> void:
+	_stop_stream()
+	_stream = CPUParticles3D.new()
+	_stream.amount = 90
+	_stream.lifetime = 0.7
+	_stream.explosiveness = 0.0
+	_stream.local_coords = true  # aimed in the robot's own frame: forward (-Z) and a little up
+	_stream.direction = Vector3(0, 0.3, -1)
+	_stream.spread = 3.0
+	_stream.initial_velocity_min = 2.8
+	_stream.initial_velocity_max = 3.1
+	_stream.gravity = Vector3(0, -9.8, 0)
+	_stream.scale_amount_min = 0.06
+	_stream.scale_amount_max = 0.09
+	var m := SphereMesh.new()
+	m.radius = 0.5
+	m.height = 1.0
+	m.radial_segments = 6
+	m.rings = 3
+	_stream.mesh = m
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.95, 0.85, 0.2, 0.9)
+	mat.emission_enabled = true
+	mat.emission = Color(0.6, 0.5, 0.1)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_stream.material_override = mat
+	_stream.position = Vector3(0.05, 0.85, -0.25)
+	add_child(_stream)
+	_stream.emitting = true
+	# the puddle, under the body, kept by the corpse so it goes when the arena is cleared
+	_puddle = MeshInstance3D.new()
+	var pm := CylinderMesh.new()
+	pm.top_radius = 0.75
+	pm.bottom_radius = 0.75
+	pm.height = 0.02
+	pm.radial_segments = 14
+	_puddle.mesh = pm
+	var pmat := StandardMaterial3D.new()
+	pmat.albedo_color = Color(0.9, 0.8, 0.15, 0.55)
+	pmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	pmat.roughness = 0.2
+	_puddle.material_override = pmat
+	victim.add_child(_puddle)
+	var pp := victim.corpse_position()
+	pp.y = 0.015
+	_puddle.global_position = pp
+	_puddle.scale = Vector3(0.15, 1.0, 0.15)
+
+
+func _stop_stream() -> void:
+	if _stream != null and is_instance_valid(_stream):
+		_stream.emitting = false
+		var st := _stream
+		get_tree().create_timer(1.0).timeout.connect(func(): if is_instance_valid(st): st.queue_free())
+	_stream = null
+	_puddle = null
 
 
 func cleanup() -> void:
+	_stop_stream()
 	if ragdoll != null and is_instance_valid(ragdoll):
 		ragdoll.queue_free()
 		ragdoll = null

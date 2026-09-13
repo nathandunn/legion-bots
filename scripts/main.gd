@@ -209,6 +209,7 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 	var punches := [0, 0]
 	var punch_hits := [0, 0]
 	var kds := [0, 0]
+	var ff := [0.0, 0.0]
 	var hist := {}
 	for r in results:
 		if r["winner"] >= 0:
@@ -225,6 +226,7 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 			punches[t] += s["punches"][t]
 			punch_hits[t] += s["punch_hits"][t]
 			kds[t] += s["knockdowns"][t]
+			ff[t] += s["friendly_fire"][t]
 		for k in s["hitbox_hist"]:
 			hist[k] = int(hist.get(k, 0)) + int(s["hitbox_hist"][k])
 	var n := maxi(results.size(), 1)
@@ -234,8 +236,8 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 	for t in 2:
 		var acc := float(rock_hits[t]) / maxf(throws[t], 1) * 100.0
 		var pacc := float(punch_hits[t]) / maxf(punches[t], 1) * 100.0
-		txt += "%s per match: rock %d / punch %d dmg, throw acc %d%%, punch acc %d%%, %d knockdowns.  " % [
-			MatchManager.TEAM_NAMES[t], int(dmg[t]["rock"] / n), int(dmg[t]["punch"] / n), int(acc), int(pacc), kds[t] / n]
+		txt += "%s per match: rock %d / punch %d dmg, throw acc %d%%, punch acc %d%%, %d knockdowns, %d friendly-fire dmg.  " % [
+			MatchManager.TEAM_NAMES[t], int(dmg[t]["rock"] / n), int(dmg[t]["punch"] / n), int(acc), int(pacc), kds[t] / n, int(ff[t] / n)]
 	var hk := hist.keys()
 	hk.sort()
 	var hparts := PackedStringArray()
@@ -246,7 +248,7 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 		"text": txt,
 		"data": {"matches": results.size(), "wins": wins, "draws": draws, "avg_duration": dur / n,
 			"damage": dmg, "throws": throws, "rock_hits": rock_hits, "punches": punches, "punch_hits": punch_hits,
-			"hitbox_hist": hist, "knockdowns": kds, "presets": names},
+			"hitbox_hist": hist, "knockdowns": kds, "friendly_fire": ff, "presets": names},
 	}
 
 

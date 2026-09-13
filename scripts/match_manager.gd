@@ -33,7 +33,7 @@ var robot_stats := {}
 var dance_clock := 0.0  # shared beat for the winners' dance
 # victory celebration: "" (none) -> gather -> dance -> teabag -> done
 const GATHER_CAP := 7.0
-const TEABAG_CAP := 24.0
+const TEABAG_CAP := 40.0
 var celebration_phase := ""
 var _phase_timer := 0.0
 var _celebrants: Array[Robot] = []
@@ -229,8 +229,8 @@ func end_match(reason: String) -> void:
 
 
 ## Winners jog to a line in front of the centre block, dance together, then the fallen
-## enemies are shared out between them and each winner goes and squats over his share
-## (every corpse gets it at least once). Then the results panel may come up.
+## enemies are shared out between them and each winner goes and squats over his share,
+## then pees on it (every corpse gets it at least once). Then the celebration is done.
 func _begin_celebration(winner: int) -> void:
 	_celebrants.clear()
 	for r in robots:
