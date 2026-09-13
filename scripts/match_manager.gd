@@ -27,6 +27,7 @@ var rng := RandomNumberGenerator.new()
 var _alive_cache: Array[Robot] = []
 var _cache_frame := -1
 var robot_stats := {}
+var dance_clock := 0.0  # shared beat for the winners' dance
 
 
 func start_match(seed_value: int = -1) -> void:
@@ -88,11 +89,13 @@ func start_match(seed_value: int = -1) -> void:
 			continue
 		var rk := Rock.new()
 		rk.manager = self
+		rk.mass_kg = [1.2, 2.0, 2.0, 3.2][rng.randi_range(0, 3)]  # pebbles, stones and a lump
 		rk.position = Vector3(x, 0.6, z)
 		world.add_child(rk)
 		rocks.append(rk)
 
 	running = true
+	dance_clock = 0.0
 	match_started.emit(match_index)
 
 
@@ -116,6 +119,7 @@ func _fresh_stats() -> Dictionary:
 		"punches": [0, 0],
 		"punch_hits": [0, 0],
 		"kills": [0, 0],
+		"friendly_fire": [0.0, 0.0],
 		"knockdowns": [0, 0],
 		"hitbox_hist": {},   # hitboxes struck per rock hit -> count
 	}
@@ -150,6 +154,7 @@ func team_hp(team: int) -> float:
 
 func _physics_process(delta: float) -> void:
 	if not running:
+		dance_clock += delta
 		return
 	elapsed += delta
 	time_left -= delta
@@ -213,6 +218,10 @@ func _on_damaged(robot: Robot, amount: float, source: String, attacker: Robot, h
 	if attacker == null:
 		return
 	var t := attacker.team
+	if robot.team == t:
+		stats["friendly_fire"][t] += amount
+		robot_stats[robot.robot_name]["dmg_taken"] += amount
+		return  # own goal: not credited as damage dealt
 	stats["damage"][t][source] += amount
 	robot_stats[robot.robot_name]["dmg_taken"] += amount
 	var a: Dictionary = robot_stats[attacker.robot_name]

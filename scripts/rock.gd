@@ -7,10 +7,14 @@ enum State { IDLE, HELD, THROWN, SPENT }
 const SPEED := 18.0          # 3x robot speed
 const MAX_DAMAGE_FRAC := 0.5   # a direct hit (FULL_HITBOXES parts struck) takes half of max HP
 const FULL_HITBOXES := 4
-const RADIUS := 0.3
+const BASE_RADIUS := 0.3       # for a 2 kg rock; radius scales with the cube root of mass
+const KE_REF := 324.0           # kinetic energy of a 2 kg rock at 18 m/s - a 'full' hit
 const FLIGHT_GRAVITY := 0.35 # lofted throw so 18 m/s reaches ~20 m
 const MAX_AIRTIME := 3.0
 const SPLASH_RADIUS := 0.78  # hitbox centres within this of the rock centre count as struck
+
+var mass_kg := 2.0
+var radius := BASE_RADIUS
 
 const LAYER_WORLD := 1
 const LAYER_ROBOTS := 2
@@ -30,7 +34,8 @@ var _mesh: MeshInstance3D
 
 
 func _ready() -> void:
-	mass = 2.0
+	mass = mass_kg
+	radius = BASE_RADIUS * pow(mass_kg / 2.0, 1.0 / 3.0)
 	collision_layer = LAYER_ROCKS
 	collision_mask = LAYER_WORLD | LAYER_ROBOTS
 	contact_monitor = true
@@ -44,8 +49,8 @@ func _ready() -> void:
 
 	_mesh = MeshInstance3D.new()
 	var sm := SphereMesh.new()
-	sm.radius = RADIUS
-	sm.height = RADIUS * 2.0
+	sm.radius = radius
+	sm.height = radius * 2.0
 	sm.radial_segments = 10
 	sm.rings = 6
 	_mesh.mesh = sm
@@ -58,7 +63,7 @@ func _ready() -> void:
 
 	var cs := CollisionShape3D.new()
 	var sh := SphereShape3D.new()
-	sh.radius = RADIUS
+	sh.radius = radius
 	cs.shape = sh
 	add_child(cs)
 
@@ -69,7 +74,7 @@ func _ready() -> void:
 	impact.monitorable = false
 	var ics := CollisionShape3D.new()
 	var ish := SphereShape3D.new()
-	ish.radius = 0.7
+	ish.radius = radius + 0.4
 	ics.shape = ish
 	impact.add_child(ics)
 	add_child(impact)
@@ -83,12 +88,17 @@ func _physics_process(delta: float) -> void:
 		if airtime > MAX_AIRTIME:
 			_spend()
 	if state == State.THROWN or state == State.SPENT:
-		if linear_velocity.length() < 2.5 and global_position.y < RADIUS + 0.4:
+		if linear_velocity.length() < 2.5 and global_position.y < radius + 0.4:
 			_settle()
 	if global_position.y < -5.0:
 		# fell through something; put it back
 		global_position = Vector3(0, 1, 0)
 		_settle()
+
+
+## Heavier rocks leave the hand slower; momentum is what they bring.
+func throw_speed() -> float:
+	return SPEED * clampf(sqrt(2.0 / mass_kg), 0.7, 1.2)
 
 
 func is_free(for_robot: Robot = null) -> bool:
@@ -176,8 +186,8 @@ func _on_impact_area(area: Area3D) -> void:
 	if not area.has_meta("robot"):
 		return
 	var robot: Robot = area.get_meta("robot")
-	if robot == null or robot == thrower or not robot.alive or robot.team == thrower.team:
-		return
+	if robot == null or robot == thrower or not robot.alive:
+		return  # friendly fire is on: a rock does not care whose it is
 	# Count every hitbox of this robot within the rock's splash radius; more parts struck = more damage.
 	var count := 0
 	for hb in robot.hitboxes:
@@ -185,7 +195,16 @@ func _on_impact_area(area: Area3D) -> void:
 			count += 1
 	count = maxi(count, 1)
 	var quality := minf(float(count), float(FULL_HITBOXES)) / float(FULL_HITBOXES)
-	robot.take_damage(Robot.MAX_HP * MAX_DAMAGE_FRAC * quality, "rock", thrower, count)
-	robot.knock_down(Robot.ROCK_KNOCKDOWN_TIME, thrower, "rock")
+	# physics decides the rest: the rock's mass and its speed RELATIVE to the robot.
+	# Walking into a rock hurts more than being clipped while running with it.
+	var rel_v := linear_velocity - robot.velocity
+	var ke := 0.5 * mass_kg * rel_v.length_squared()
+	var punch := clampf(ke / KE_REF, 0.0, 1.3)
+	var dmg := Robot.MAX_HP * MAX_DAMAGE_FRAC * quality * punch
+	if dmg < 1.0:
+		return  # a rock rolling over your foot is not a hit
+	robot.take_damage(dmg, "rock", thrower, count)
+	var impulse := rel_v * mass_kg * 1.4 + Vector3(0, 6.0 + 6.0 * punch, 0)
+	robot.knock_down(0.7 + 1.3 * clampf(punch, 0.0, 1.0), thrower, "rock", impulse)
 	linear_velocity *= 0.3
 	_spend()

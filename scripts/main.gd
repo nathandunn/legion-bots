@@ -2,7 +2,7 @@ extends Node3D
 ## Entry point. Builds the world, wires the HUD, runs matches; supports headless batch sim:
 ##   godot --headless --path . -- --sim=20 [--red=Brawler --blue=Slinger] [--seed=1]
 
-const AUTO_RESTART_DELAY := 20.0
+const AUTO_RESTART_DELAY := 32.0
 
 var manager: MatchManager
 var arena: Arena
@@ -53,6 +53,9 @@ func _ready() -> void:
 	hud.new_match_requested.connect(func(): batch_left = 0; batch_results.clear(); _start_next())
 	hud.batch_requested.connect(_run_batch)
 	hud.speed_changed.connect(set_sim_speed)
+	hud.pause_toggled.connect(func(p: bool): get_tree().paused = p)
+	hud.process_mode = Node.PROCESS_MODE_ALWAYS
+	cam.process_mode = Node.PROCESS_MODE_ALWAYS
 	_start_next()
 
 
@@ -155,7 +158,7 @@ func _on_match_ended(result: Dictionary) -> void:
 		return
 	if hud != null:
 		# let the winners have their cheer before the panel covers the arena
-		get_tree().create_timer(2.6).timeout.connect(func(): if manager.match_index == result["match"] and not manager.running: hud.show_result(result))
+		get_tree().create_timer(Robot.DANCE_TIME + 0.6).timeout.connect(func(): if manager.match_index == result["match"] and not manager.running: hud.show_result(result))
 	elif headless:
 		print(JSON.stringify(result))
 	_restart_timer = AUTO_RESTART_DELAY

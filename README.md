@@ -12,10 +12,10 @@ Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
 | teams | 5 v 5, last team standing, 150 s cap (most total HP wins on time) |
 | robot speed | 6 m/s (±8 % by aggression); backpedalling (moving away from what you face) is 22 % slower, so chasers catch fleers |
 | rock speed | 18 m/s (3× robot), ~20 m range, lofted flight |
-| rocks | 5 on the field (1 per 2 robots), scattered, reusable — thrown rocks land and can be picked up again |
+| rocks | 5 on the field (1 per 2 robots), scattered, reusable — thrown rocks land and can be picked up again. Three sizes (1.2 / 2 / 3.2 kg); heavier ones leave the hand slower but carry more momentum |
 | hitboxes | head, torso, 2 arms, 2 legs. Hit quality = parts struck / "full" parts |
-| rock hit | up to **50 % of max HP** for a direct hit (4+ parts within the 0.78 m splash); 1 part = 12.5 %. **Always knocks the robot down** (1.8 s) |
-| punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. **Knockdown chance 50 % × hit quality** (1.1 s) |
+| rock hit | physics decides: damage = 50 % of max HP × parts-struck quality × (kinetic energy of the rock **relative to the robot** / a full-speed 2 kg throw). Walking into a rock hurts more than being clipped while running with it. **Friendly fire is on.** Knockdown impulse is the rock's momentum; down time 0.7–2 s by energy |
+| punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. Every landed punch sends the target sprawling as a ragdoll (0.55 s); with **chance 50 % × hit quality** it's a proper floor (1.1 s) |
 | knockdown | the robot becomes a **ragdoll** (six pinned rigid bodies) and gets shoved away from the hit; it can't act, and its hitboxes drop below the fist box so it can't be punched while down; 0.4 s grace after getting up. Dead robots stay ragdolls |
 | HP | 200, shown as a bar over each robot (green → red) |
 | dodging | robots notice an incoming enemy rock with probability 0.2 + 0.75·caution, react after 0.2–0.55 s, then sidestep |
@@ -34,7 +34,9 @@ Doctrine that falls out of the traits:
   enemy within 3 m); throws, then sprints for the next rock.
 - **Coward** (`caution` ≥ 0.8) never closes in: hides behind cover when an enemy is holding a rock,
   backs off when someone is coming at it, throws only when armed and far away, punches only when cornered.
-- The winning team cheers for two seconds at the end of a match, then the results panel opens.
+- Throws pick the nearest enemy that is standing and has a clear line (raycast against cover); a floored
+  enemy is aimed at low and only if nobody is up.
+- The winning team dances for ten seconds — hips, arms and a slow turn, all on one shared beat — then the results panel opens.
 
 The brain (`Robot._decide`) is a small utility AI: every 0.15 s it scores
 `dodge / fetch / throw / punch / kite / retreat / regroup / wander` from traits + situation and takes the best
@@ -44,7 +46,7 @@ the cooldown is up.
 ## Controls
 
 - Drag to orbit, wheel / pinch to zoom. Camera auto-orbits when idle.
-- `1x 2x 4x 8x` — sim speed (raises the physics tick rate to match, so fast mode is not sloppier).
+- `Pause` / `Play`, then `1x 2x 4x 8x` — sim speed (raises the physics tick rate to match, so fast mode is not sloppier).
 - `Teams / setup` — preset + sliders per team, then `Start match with these teams`.
 - `Live list` — per-robot HP / current action. `Last results` reopens the last match's results.
 - `New match`, `Batch x10` — batch runs at 8× and prints win rates, damage by source, throw/punch accuracy,

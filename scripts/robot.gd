@@ -15,7 +15,9 @@ const PUNCH_MAX_FRAC := 0.2         # best punch (PUNCH_FULL_HITBOXES parts) tak
 const PUNCH_FULL_HITBOXES := 3
 const PUNCH_KNOCKDOWN_CHANCE := 0.5 # at full quality; scales down with a glancing hit
 const PUNCH_KNOCKDOWN_TIME := 1.1
+const PUNCH_FLOP_TIME := 0.55       # a landed punch that doesn't floor you still sends you sprawling
 const ROCK_KNOCKDOWN_TIME := 1.8    # every rock hit floors you
+const DANCE_TIME := 10.0
 const RECOVER_GRACE := 0.4          # can't be floored again right after getting up
 const PUNCH_COOLDOWN := 0.6         # 4x faster than a throw
 const PUNCH_REACH := 1.7
@@ -272,15 +274,12 @@ func _physics_process(delta: float) -> void:
 		move_dir = Vector3.ZERO
 		if cheer_timer > 0.0:
 			cheer_timer -= delta
-			_cheer_phase += delta * 12.0
-			body_root.position.y = absf(sin(_cheer_phase)) * 0.35
-			var wave := -PI + sin(_cheer_phase * 0.7) * 0.4
-			arm_l.rotation.x = wave
-			arm_r.rotation.x = wave
+			_dance(manager.dance_clock)
 			if cheer_timer <= 0.0:
 				body_root.position.y = 0.0
-				arm_l.rotation.x = 0.0
-				arm_r.rotation.x = 0.0
+				body_root.rotation = Vector3.ZERO
+				arm_l.rotation = Vector3.ZERO
+				arm_r.rotation = Vector3.ZERO
 		if ragdoll != null and down_timer > 0.0:
 			_follow_ragdoll()
 		return
@@ -340,15 +339,17 @@ func _physics_process(delta: float) -> void:
 		held_rock.global_position = to_global(HAND_POS)
 
 	# opportunistic punch: anyone in reach and fist ready - unless this robot doesn't box
-	if manager != null and (punch_timer <= 0.0 or (held_rock != null and throw_timer <= 0.0)):
+	if manager != null and punch_timer <= 0.0:
 		var e := _nearest_enemy()
 		if e != null:
 			var ed := _flat_dist(e.global_position)
-			if punch_timer <= 0.0 and ed <= PUNCH_REACH + 0.2 and _will_box(ed):
+			if ed <= PUNCH_REACH + 0.2 and _will_box(ed):
 				_punch()
-			# opportunistic throw: arm is ready and someone is in range - fling it, whatever we were doing
-			if held_rock != null and throw_timer <= 0.0 and ed <= THROW_RANGE and action != "dodge":
-				_throw_at(e)
+	# opportunistic throw: arm ready and a standing enemy in range with a clear line - fling it
+	if manager != null and held_rock != null and throw_timer <= 0.0 and action != "dodge":
+		var tgt := _throw_target()
+		if tgt != null:
+			_throw_at(tgt)
 
 
 ## Slingers don't box and cowards don't close in - unless there's no other choice
@@ -360,6 +361,35 @@ func _will_box(edist: float) -> bool:
 		return true
 	var cornered := held_rock == null and _nearest_free_rock() == null and edist < 3.0
 	return cornered
+
+
+## Who to throw at: the nearest enemy that is on its feet and not behind cover.
+## Falls back to a floored enemy (aimed low) only if nobody is standing.
+func _throw_target() -> Robot:
+	var best: Robot = null
+	var best_cost := INF
+	var origin := to_global(HAND_POS)
+	for r: Robot in manager.alive_robots():
+		if r.team == team or r == self:
+			continue
+		var d := _flat_dist(r.global_position)
+		if d > THROW_RANGE:
+			continue
+		var aim_y := 0.35 if r.down_timer > 0.0 else 1.1
+		if not _clear_line(origin, r.global_position + Vector3(0, aim_y, 0)):
+			continue
+		var cost := d + (12.0 if r.down_timer > 0.0 else 0.0)
+		if cost < best_cost:
+			best_cost = cost
+			best = r
+	return best
+
+
+func _clear_line(from: Vector3, to: Vector3) -> bool:
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(from, to, LAYER_WORLD)
+	q.exclude = [get_rid()]
+	return space.intersect_ray(q).is_empty()
 
 
 func _follow_ragdoll() -> void:
@@ -425,8 +455,8 @@ func _incoming_threat() -> Dictionary:
 	var notice_p := 0.2 + caution * 0.75
 	var reaction := 0.2 + (1.0 - caution) * 0.35  # seconds before the dodge starts
 	for rk: Rock in manager.rocks:
-		if rk.state != Rock.State.THROWN or rk.thrower == null or rk.thrower.team == team:
-			_rock_notice.erase(rk)
+		if rk.state != Rock.State.THROWN or rk.thrower == null or rk.thrower == self:
+			_rock_notice.erase(rk)  # friendly rocks hurt just the same - mind them too
 			continue
 		if not _rock_notice.has(rk):
 			_rock_notice[rk] = (manager.elapsed + reaction) if rng.randf() < notice_p else -1.0
@@ -600,8 +630,9 @@ func _decide() -> void:
 		"throw":
 			face_point = enemy.global_position
 			has_face_point = true
-			if edist <= THROW_RANGE and throw_timer <= 0.0:
-				_throw_at(enemy)
+			var tgt := _throw_target()
+			if tgt != null and throw_timer <= 0.0:
+				_throw_at(tgt)
 			# positioning: get into range, keep some distance, slight strafe for patience-low bots
 			var to := enemy.global_position - global_position
 			to.y = 0.0
@@ -712,13 +743,14 @@ func _throw_at(target: Robot) -> void:
 		return
 	var accuracy := personality.get_trait("accuracy")
 	var origin := to_global(HAND_POS)
-	var tpos := target.global_position + Vector3(0, 1.1, 0)
+	var speed := held_rock.throw_speed()
+	var tpos := target.global_position + Vector3(0, 0.35 if target.down_timer > 0.0 else 1.1, 0)
 	var dist := origin.distance_to(tpos)
-	var t := dist / Rock.SPEED
+	var t := dist / speed
 	var aim := tpos + target.velocity * t * (0.4 + 0.6 * accuracy)
 	var dir := (aim - origin).normalized()
 	# loft to counter the reduced flight gravity: v_y = 0.5 * g * t
-	dir.y += 0.5 * 9.8 * Rock.FLIGHT_GRAVITY * t / Rock.SPEED
+	dir.y += 0.5 * 9.8 * Rock.FLIGHT_GRAVITY * t / speed
 	var err := (1.0 - accuracy) * 0.22
 	dir = dir.rotated(Vector3.UP, rng.randf_range(-err, err))
 	var side := dir.cross(Vector3.UP)
@@ -727,7 +759,7 @@ func _throw_at(target: Robot) -> void:
 	dir = dir.normalized()
 	var rock := held_rock
 	held_rock = null
-	rock.launch(origin, dir * Rock.SPEED, self)
+	rock.launch(origin, dir * speed, self)
 	throw_timer = THROW_COOLDOWN
 	_swing = 0.2
 	decide_timer = 0.0
@@ -750,8 +782,14 @@ func _punch() -> void:
 		landed = true
 		var quality := minf(float(hits[r]), float(PUNCH_FULL_HITBOXES)) / float(PUNCH_FULL_HITBOXES)
 		r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality, "punch", self, hits[r])
-		if rng.randf() < PUNCH_KNOCKDOWN_CHANCE * quality:
-			r.knock_down(PUNCH_KNOCKDOWN_TIME, self, "punch")
+		# every landed punch sends them sprawling; the roll decides whether it's a flop or a proper floor
+		var floored := rng.randf() < PUNCH_KNOCKDOWN_CHANCE * quality
+		var victim: Robot = r
+		var away: Vector3 = victim.global_position - global_position
+		away.y = 0.0
+		away = away.normalized() if away.length_squared() > 0.01 else -global_transform.basis.z
+		var impulse: Vector3 = away * (10.0 + 26.0 * quality) + Vector3(0, 4.0 + 5.0 * quality, 0)
+		victim.knock_down(PUNCH_KNOCKDOWN_TIME if floored else PUNCH_FLOP_TIME, self, "punch", impulse)
 	punched.emit(self, landed)
 
 
@@ -767,19 +805,21 @@ func take_damage(amount: float, source: String, attacker: Robot, hitbox_count: i
 	_update_label()
 
 
-func knock_down(duration: float, by: Robot, source: String) -> void:
+func knock_down(duration: float, by: Robot, source: String, impulse: Vector3 = Vector3.ZERO) -> void:
 	if not alive or grace_timer > 0.0:
 		return
 	var was_up := down_timer <= 0.0
 	down_timer = maxf(down_timer, duration)
 	action = "down"
 	move_dir = Vector3.ZERO
-	var shove := Vector3(0, 1, 0) * 8.0
-	if by != null:
-		var away := global_position - by.global_position
-		away.y = 0.0
-		if away.length_squared() > 0.01:
-			shove += away.normalized() * (45.0 if source == "rock" else 22.0)
+	var shove := impulse
+	if shove.length_squared() < 0.01:
+		shove = Vector3(0, 1, 0) * 8.0
+		if by != null:
+			var away := global_position - by.global_position
+			away.y = 0.0
+			if away.length_squared() > 0.01:
+				shove += away.normalized() * (45.0 if source == "rock" else 22.0)
 	if was_up:
 		_spawn_ragdoll()
 		# hitboxes ride the (now invisible) rig so a floored robot is still below the fist box
@@ -822,9 +862,24 @@ func _get_up() -> void:
 	_body_tween.tween_property(body_root, "position:y", 0.0, 0.3)
 
 
+## The victory dance. Every winner reads the same clock, so the team moves as one:
+## hips swinging side to side, arms rolling overhead, a hop on the beat, and a slow
+## full turn every few bars.
+func _dance(t: float) -> void:
+	var beat := t * TAU * 1.6  # ~96 bpm
+	body_root.rotation.z = sin(beat) * 0.28              # hip sway
+	body_root.rotation.x = -absf(sin(beat * 0.5)) * 0.12  # a little forward lean on the downbeat
+	body_root.rotation.y = fmod(t * 0.5, 1.0) * TAU if fmod(t, 4.0) < 2.0 else 0.0  # slow turn every other bar
+	body_root.position.y = maxf(sin(beat * 2.0), 0.0) * 0.18  # hop
+	arm_l.rotation.x = -PI + sin(beat) * 0.6
+	arm_l.rotation.z = -0.5 + sin(beat + 0.7) * 0.4
+	arm_r.rotation.x = -PI - sin(beat) * 0.6
+	arm_r.rotation.z = 0.5 - sin(beat + 0.7) * 0.4
+
+
 func cheer() -> void:
 	if alive and down_timer <= 0.0:
-		cheer_timer = 2.0
+		cheer_timer = DANCE_TIME
 		_cheer_phase = rng.randf_range(0.0, TAU)
 
 

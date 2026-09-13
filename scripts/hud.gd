@@ -6,6 +6,7 @@ extends CanvasLayer
 signal new_match_requested
 signal batch_requested(n: int)
 signal speed_changed(scale: float)
+signal pause_toggled(paused: bool)
 
 const PRESET_LIST := ["Balanced", "Brawler", "Slinger", "Coward", "Tactician", "Random", "Custom"]
 
@@ -76,6 +77,11 @@ func setup(m: MatchManager) -> void:
 	var row2 := HFlowContainer.new()
 	row2.add_theme_constant_override("h_separation", 6)
 	vbox.add_child(row2)
+	var pause_btn := Button.new()
+	pause_btn.text = "Pause"
+	pause_btn.toggle_mode = true
+	pause_btn.toggled.connect(func(on: bool): pause_btn.text = "Play" if on else "Pause"; pause_toggled.emit(on))
+	row2.add_child(pause_btn)
 	for s in [1, 2, 4, 8]:
 		var b := Button.new()
 		b.text = "%dx" % s
@@ -398,6 +404,7 @@ func show_result(res: Dictionary) -> void:
 		["Punch damage", func(t): return "%d" % int(s["damage"][t]["punch"])],
 		["Knockdowns dealt", func(t): return "%d" % s["knockdowns"][t]],
 		["Kills", func(t): return "%d" % s["kills"][t]],
+		["Friendly-fire damage", func(t): return "%d" % int(s["friendly_fire"][t])],
 	]
 	for row in rows:
 		grid.add_child(_cell(row[0], false, Color(0.8, 0.8, 0.85)))
