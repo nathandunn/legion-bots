@@ -430,8 +430,10 @@ func show_result(res: Dictionary) -> void:
 		["Team HP left", func(t): return "%d%%" % int(round(100.0 * res["hp"][t] / (Robot.MAX_HP * MatchManager.TEAM_SIZE)))],
 		["Throws / hits", func(t): return "%d / %d  (%s)" % [s["throws"][t], s["rock_hits"][t], _pct(s["rock_hits"][t], s["throws"][t])]],
 		["Punches / hits", func(t): return "%d / %d  (%s)" % [s["punches"][t], s["punch_hits"][t], _pct(s["punch_hits"][t], s["punches"][t])]],
+		["Kicks / hits", func(t): return "%d / %d  (%s)" % [s["kicks"][t], s["kick_hits"][t], _pct(s["kick_hits"][t], s["kicks"][t])]],
 		["Rock damage", func(t): return "%d" % int(s["damage"][t]["rock"])],
 		["Punch damage", func(t): return "%d" % int(s["damage"][t]["punch"])],
+		["Kick damage", func(t): return "%d" % int(s["damage"][t].get("kick", 0.0))],
 		["Knockdowns dealt", func(t): return "%d" % s["knockdowns"][t]],
 		["Kills (enemy dead)", func(t): return "%d" % s["kills"][t]],
 		["Friendly-fire damage", func(t): return "%d" % int(s["friendly_fire"][t])],
@@ -452,21 +454,23 @@ func show_result(res: Dictionary) -> void:
 	# per-robot table
 	results_box.add_child(_cell("Robots", true, Color.WHITE, 16))
 	var rg := GridContainer.new()
-	rg.columns = 9
+	rg.columns = 11
 	rg.add_theme_constant_override("h_separation", 14)
 	rg.add_theme_constant_override("v_separation", 2)
 	results_box.add_child(rg)
-	for hdr in ["Robot", "Type", "Damage", "Rock", "Punch", "Throw acc", "Punch acc", "KD", "Kills / HP"]:
+	for hdr in ["Robot", "Type", "Damage", "Rock", "Punch", "Kick", "Throw acc", "Punch acc", "Kick acc", "KD", "Kills / HP"]:
 		rg.add_child(_cell(hdr, false, Color(0.75, 0.75, 0.8), 13))
 	for r in res["robots"]:
 		var col: Color = MatchManager.TEAM_COLORS[r["team"]].lightened(0.25)
 		rg.add_child(_cell(r["name"], true, col))
 		rg.add_child(_cell(r["preset"]))
-		rg.add_child(_cell("%d" % int(r["dmg_rock"] + r["dmg_punch"])))
+		rg.add_child(_cell("%d" % int(r["dmg_rock"] + r["dmg_punch"] + r.get("dmg_kick", 0.0))))
 		rg.add_child(_cell("%d" % int(r["dmg_rock"])))
 		rg.add_child(_cell("%d" % int(r["dmg_punch"])))
+		rg.add_child(_cell("%d" % int(r.get("dmg_kick", 0.0))))
 		rg.add_child(_cell("%d/%d %s" % [r["rock_hits"], r["throws"], _pct(r["rock_hits"], r["throws"])]))
 		rg.add_child(_cell("%d/%d %s" % [r["punch_hits"], r["punches"], _pct(r["punch_hits"], r["punches"])]))
+		rg.add_child(_cell("%d/%d %s" % [r.get("kick_hits", 0), r.get("kicks", 0), _pct(r.get("kick_hits", 0), r.get("kicks", 0))]))
 		rg.add_child(_cell("%d" % r["knockdowns"]))
 		rg.add_child(_cell("%d / %s" % [r["kills"], ("%d%%" % int(round(100.0 * r["hp"] / Robot.MAX_HP))) if r["alive"] else "dead"]))
 

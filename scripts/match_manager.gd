@@ -81,12 +81,13 @@ func start_match(seed_value: int = -1) -> void:
 			r.died.connect(_on_died)
 			r.threw.connect(_on_threw)
 			r.punched.connect(_on_punched)
+			r.kicked.connect(_on_kicked)
 			r.knocked_down.connect(_on_knocked_down)
 			world.add_child(r)
 			robots.append(r)
 			robot_stats[r.robot_name] = {"name": r.robot_name, "team": t, "preset": r.personality.label(),
-				"dmg_rock": 0.0, "dmg_punch": 0.0, "dmg_taken": 0.0, "throws": 0, "rock_hits": 0,
-				"punches": 0, "punch_hits": 0, "knockdowns": 0, "kills": 0, "hp": r.hp, "alive": true}
+				"dmg_rock": 0.0, "dmg_punch": 0.0, "dmg_kick": 0.0, "dmg_taken": 0.0, "throws": 0, "rock_hits": 0,
+				"punches": 0, "punch_hits": 0, "kicks": 0, "kick_hits": 0, "knockdowns": 0, "kills": 0, "hp": r.hp, "alive": true}
 
 	var n_rocks := int(ceil(TEAM_SIZE * 2 * ROCKS_PER_ROBOT))
 	var tries := 0
@@ -126,7 +127,9 @@ func clear() -> void:
 
 func _fresh_stats() -> Dictionary:
 	return {
-		"damage": [{"rock": 0.0, "punch": 0.0}, {"rock": 0.0, "punch": 0.0}],
+		"damage": [{"rock": 0.0, "punch": 0.0, "kick": 0.0}, {"rock": 0.0, "punch": 0.0, "kick": 0.0}],
+		"kicks": [0, 0],
+		"kick_hits": [0, 0],
 		"throws": [0, 0],
 		"rock_hits": [0, 0],
 		"punches": [0, 0],
@@ -316,6 +319,8 @@ func _on_damaged(robot: Robot, amount: float, source: String, attacker: Robot, h
 		a["dmg_rock"] += amount
 		var h: Dictionary = stats["hitbox_hist"]
 		h[hitbox_count] = int(h.get(hitbox_count, 0)) + 1
+	elif source == "kick":
+		a["dmg_kick"] += amount
 	else:
 		a["dmg_punch"] += amount
 	if robot.hp <= 0.0 and robot.alive:  # hp is already reduced; _die() follows this signal
@@ -337,6 +342,14 @@ func _on_punched(robot: Robot, landed: bool) -> void:
 	if landed:
 		stats["punch_hits"][robot.team] += 1
 		robot_stats[robot.robot_name]["punch_hits"] += 1
+
+
+func _on_kicked(robot: Robot, landed: bool) -> void:
+	stats["kicks"][robot.team] += 1
+	robot_stats[robot.robot_name]["kicks"] += 1
+	if landed:
+		stats["kick_hits"][robot.team] += 1
+		robot_stats[robot.robot_name]["kick_hits"] += 1
 
 
 func _on_knocked_down(_robot: Robot, by: Robot, _source: String) -> void:

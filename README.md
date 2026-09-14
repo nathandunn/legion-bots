@@ -16,6 +16,7 @@ Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
 | hitboxes | head, torso, 2 arms, 2 legs. Hit quality = parts struck / "full" parts |
 | rock hit | physics decides: damage = 50 % of max HP × parts-struck quality × (kinetic energy of the rock **relative to the robot** / a full-speed 2 kg throw). Walking into a rock hurts more than being clipped while running with it. **Friendly fire is on.** Knockdown impulse is the rock's momentum; down time 0.7–2 s by energy |
 | punch | up to **20 % of max HP** (3+ parts in the fist box); every 0.6 s (4× a throw's 2.4 s), no rock needed. A punch has a 0.22 s wind-up: a target who can see it coming sidesteps with chance 0.15 + 0.6·caution, and the swing itself lands with chance 0.55 + 0.45·`ACCURACY`. Accuracy (0.7) is the same for everyone — it is not a personality trait. Every landed punch sends the target sprawling as a ragdoll (0.55 s); with **chance 50 % × hit quality** it's a proper floor (1.1 s) |
+| kick | from the hip: 0.3 s wind-up, reach 2 m, cooldown 0.9 s; a third of melee attacks on a standing enemy are kicks (punch damage, 60 % × quality knockdown). **A man on the floor can only be kicked**: a stomp does 12 % of max HP, keeps him down another 0.5 s and shoves the ragdoll. Everyone stomps a floored enemy in reach; the brain also goes looking for them (`stomp` action — slingers half as keen, cowards only when nobody standing is near) |
 | knockdown | the robot becomes a **ragdoll** (six pinned rigid bodies) and gets shoved away from the hit; it can't act, and its hitboxes drop below the fist box so it can't be punched while down; 0.4 s grace after getting up. Dead robots stay ragdolls |
 | HP | 200, shown as a bar over each robot (green → red) |
 | eyes | robots see ~190° in front of them and not through cover. A rock they can see coming is spotted 92 % of the time, and after 0.08–0.28 s (quicker when cautious) they drop everything and sprint out of its path; a rock from behind or over a block is never seen. Throws need the target in view too |
@@ -85,6 +86,7 @@ throws / hits, punches / hits, hitbox histogram). Runs at 20× game speed.
 Sample (6 matches, seed 5): Slinger 2 – Brawler 4, avg 32 s; slingers 606 rock dmg per match at 51 %
 throw accuracy (they only throw at what they can see), brawlers 948 punch dmg. Slinger 3 – Balanced 3.
 Set `RBCELEB=1` to let the winners finish their celebration headless (prints the phase changes).
+Legs swing from the hip in time with the ground covered (no more sliding statues); kicks animate the right leg.
 
 ## Build / deploy
 

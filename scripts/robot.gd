@@ -7,6 +7,7 @@ signal died(robot: Robot)
 signal damaged(robot: Robot, amount: float, source: String, attacker: Robot, hitbox_count: int)
 signal threw(robot: Robot)
 signal punched(robot: Robot, landed: bool)
+signal kicked(robot: Robot, landed: bool)
 signal knocked_down(robot: Robot, by: Robot, source: String)
 
 const SPEED := 6.0
@@ -26,6 +27,12 @@ const RECOVER_GRACE := 0.4          # can't be floored again right after getting
 const PUNCH_COOLDOWN := 0.6         # 4x faster than a throw
 const PUNCH_REACH := 1.7
 const PUNCH_WINDUP := 0.22          # seen coming: the wind-up before the fist lands
+const KICK_REACH := 2.0             # a boot reaches further than a fist
+const KICK_WINDUP := 0.3
+const KICK_COOLDOWN := 0.9
+const KICK_KNOCKDOWN_CHANCE := 0.6  # a boot to a standing man floors him more often than a fist
+const STOMP_FRAC := 0.12            # a kick to a man on the floor: 12% of max HP, and he stays down longer
+const STOMP_EXTRA_DOWN := 0.5
 const THROW_COOLDOWN := 2.4
 const THROW_RANGE := 20.0
 const PICKUP_RANGE := 1.5
@@ -89,6 +96,13 @@ var fist: Area3D
 var body_root: Node3D
 var arm_r: MeshInstance3D
 var arm_l: MeshInstance3D
+var leg_l: Node3D
+var leg_r: Node3D
+var _gait := 0.0
+var _kick_pending := 0.0
+var _kick_anim := 0.0
+var _kick_target: Robot = null
+var kick_timer := 0.0
 var _dark_mat: StandardMaterial3D
 var _eye_mat: StandardMaterial3D
 var ragdoll: Ragdoll = null
@@ -151,8 +165,8 @@ func _build_body() -> void:
 	_part("head", _box(Vector3(0.36, 0.34, 0.36)), _box_shape(Vector3(0.4, 0.38, 0.4)), Vector3(0, 1.75, 0), _mat)
 	arm_l = _part("arm_l", _capsule(0.1, 0.62), _capsule_shape(0.12, 0.66), Vector3(-0.42, 1.2, 0), dark)
 	arm_r = _part("arm_r", _capsule(0.1, 0.62), _capsule_shape(0.12, 0.66), Vector3(0.42, 1.2, 0), dark)
-	_part("leg_l", _capsule(0.12, 0.76), _capsule_shape(0.14, 0.8), Vector3(-0.17, 0.4, 0), dark)
-	_part("leg_r", _capsule(0.12, 0.76), _capsule_shape(0.14, 0.8), Vector3(0.17, 0.4, 0), dark)
+	leg_l = _leg("leg_l", -0.17, dark)
+	leg_r = _leg("leg_r", 0.17, dark)
 
 	# eye so you can see which way it faces
 	var eye := MeshInstance3D.new()
@@ -215,6 +229,40 @@ func _bar_material(c: Color, prio: int) -> StandardMaterial3D:
 	m.albedo_color = c
 	m.render_priority = prio
 	return m
+
+
+## A leg swings from the hip: a pivot at hip height with the capsule hanging below it.
+## The hitbox stays put on the rig (legs are hit where legs are, not where the swing is).
+func _leg(part_name: String, x: float, mat: Material) -> Node3D:
+	var piv := Node3D.new()
+	piv.name = part_name + "_pivot"
+	piv.position = Vector3(x, 0.78, 0)
+	body_root.add_child(piv)
+	var mi := MeshInstance3D.new()
+	mi.name = part_name
+	mi.mesh = _capsule(0.12, 0.76)
+	mi.material_override = mat
+	mi.position = Vector3(0, -0.38, 0)
+	piv.add_child(mi)
+	_hitbox(part_name, _capsule_shape(0.14, 0.8), Vector3(x, 0.4, 0))
+	return piv
+
+
+func _hitbox(part_name: String, shape: Shape3D, pos: Vector3) -> void:
+	var hb := Area3D.new()
+	hb.name = "hb_" + part_name
+	hb.collision_layer = LAYER_HITBOXES
+	hb.collision_mask = 0
+	hb.monitoring = false
+	hb.monitorable = true
+	hb.set_meta("robot", self)
+	hb.set_meta("part", part_name)
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	hb.add_child(cs)
+	hb.position = pos
+	body_root.add_child(hb)
+	hitboxes.append(hb)
 
 
 func _part(part_name: String, mesh: Mesh, shape: Shape3D, pos: Vector3, mat: Material) -> MeshInstance3D:
@@ -294,11 +342,16 @@ func _physics_process(delta: float) -> void:
 		return
 	punch_timer -= delta
 	throw_timer -= delta
+	kick_timer -= delta
 	_flee_timer -= delta
 	if _punch_pending > 0.0:
 		_punch_pending -= delta
 		if _punch_pending <= 0.0 and down_timer <= 0.0 and (manager == null or manager.running):
-			_punch_land()
+			_melee_land("punch")
+	if _kick_pending > 0.0:
+		_kick_pending -= delta
+		if _kick_pending <= 0.0 and down_timer <= 0.0 and (manager == null or manager.running):
+			_melee_land("kick")
 	decide_timer -= delta
 	wander_timer -= delta
 	grace_timer -= delta
@@ -403,17 +456,45 @@ func _physics_process(delta: float) -> void:
 		arm_r.rotation.x = (0.9 * (1.0 - (_swing - 0.2) / PUNCH_WINDUP)) if _swing > 0.2 else -1.6 * (_swing / 0.2)
 	else:
 		arm_r.rotation.x = 0.0
+	# feet: legs swing from the hip in time with the ground covered; a kick overrides the right leg
+	var spd := velocity.length()
+	if _kick_anim > 0.0:
+		_kick_anim -= delta
+		var k := 1.0 - _kick_anim / (KICK_WINDUP + 0.25)  # 0..1 over the whole kick
+		leg_r.rotation.x = (0.5 * k / 0.55) if k < 0.55 else -1.35 * sin((k - 0.55) / 0.45 * PI)  # wind back, then boot
+		leg_l.rotation.x = 0.0
+	elif spd > 0.4:
+		_gait += delta * spd * 1.7
+		leg_l.rotation.x = sin(_gait) * 0.6
+		leg_r.rotation.x = -sin(_gait) * 0.6
+		if _swing <= 0.0:
+			arm_l.rotation.x = -sin(_gait) * 0.35
+			arm_r.rotation.x = sin(_gait) * 0.35
+	else:
+		leg_l.rotation.x = lerpf(leg_l.rotation.x, 0.0, minf(delta * 10.0, 1.0))
+		leg_r.rotation.x = lerpf(leg_r.rotation.x, 0.0, minf(delta * 10.0, 1.0))
+		if _swing <= 0.0:
+			arm_l.rotation.x = lerpf(arm_l.rotation.x, 0.0, minf(delta * 10.0, 1.0))
 
 	if held_rock != null:
 		held_rock.global_position = to_global(HAND_POS)
 
-	# opportunistic punch: anyone in reach and fist ready - unless this robot doesn't box
-	if manager != null and punch_timer <= 0.0:
+	# opportunistic boot: an enemy on the floor within reach gets stomped, whoever you are
+	if manager != null and kick_timer <= 0.0 and _kick_pending <= 0.0 and _punch_pending <= 0.0:
+		var dn := _nearest_downed_enemy(KICK_REACH)
+		if dn != null and _facing(dn.corpse_position()):
+			_kick(dn)
+	# opportunistic punch (or, a third of the time, a kick): anyone in reach and fist ready -
+	# unless this robot doesn't box
+	if manager != null and punch_timer <= 0.0 and _kick_pending <= 0.0:
 		var e := _nearest_enemy()
 		if e != null:
 			var ed := _flat_dist(e.global_position)
 			if ed <= PUNCH_REACH + 0.2 and _will_box(ed):
-				_punch()
+				if kick_timer <= 0.0 and rng.randf() < 0.3:
+					_kick(e)
+				else:
+					_punch()
 	# opportunistic throw: arm ready and a standing enemy in range with a clear line - fling it
 	if manager != null and held_rock != null and throw_timer <= 0.0 and action != "dodge":
 		var tgt := _throw_target()
@@ -605,6 +686,30 @@ func _nearest_enemy() -> Robot:
 			bd = d
 			best = r
 	return best
+
+
+## The nearest living enemy who is on the floor (ragdolled) within reach_m of us.
+func _nearest_downed_enemy(reach_m: float) -> Robot:
+	var best: Robot = null
+	var bd := reach_m
+	for r: Robot in manager.alive_robots():
+		if r.team == team or r == self or r.down_timer <= 0.0:
+			continue
+		var d := _flat_dist(r.corpse_position())
+		if d < bd:
+			bd = d
+			best = r
+	return best
+
+
+func _facing(point: Vector3) -> bool:
+	var f := -global_transform.basis.z
+	f.y = 0.0
+	var to := point - global_position
+	to.y = 0.0
+	if to.length_squared() < 0.04 or f.length_squared() < 0.001:
+		return true
+	return f.normalized().dot(to.normalized()) > 0.45
 
 
 ## A mate in trouble: floored, or with an enemy at his throat. Returns {mate, enemy, urgency} or {}.
@@ -809,6 +914,16 @@ func _decide() -> void:
 		scores["kite"] = s3 * flee_sense
 		if _flee_timer > 0.0:
 			scores["kite"] = 2.5  # just poked someone: run
+	# an enemy on the floor nearby: go and put the boot in (slingers would rather throw, cowards
+	# only when nobody standing is close)
+	var downed := _nearest_downed_enemy(8.0)
+	if downed != null:
+		var ss := 0.45 + aggression * 0.9 + (0.25 if held_rock == null else 0.0)
+		if rock_love >= 0.75:
+			ss *= 0.5
+		if caution >= 0.8:
+			ss *= 0.6 if edist > 6.0 else 0.0
+		scores["stomp"] = ss * clampf(1.2 - _flat_dist(downed.corpse_position()) / 8.0, 0.3, 1.0)
 	# guard a mate who has someone on him: get between them and deal with the attacker
 	var trouble := _mate_in_trouble() if protect > 0.05 else {}
 	if not trouble.is_empty():
@@ -940,6 +1055,15 @@ func _decide() -> void:
 			var to := hide_spot - global_position
 			to.y = 0.0
 			move_dir = to.normalized() if to.length() > 0.8 else Vector3.ZERO
+		"stomp":
+			var spot := downed.corpse_position()
+			face_point = spot
+			has_face_point = true
+			var to := spot - global_position
+			to.y = 0.0
+			move_dir = to.normalized() if to.length() > KICK_REACH * 0.7 else Vector3.ZERO
+			if to.length() <= KICK_REACH and kick_timer <= 0.0 and _kick_pending <= 0.0:
+				_kick(downed)
 		"guard":
 			var mate: Robot = trouble["mate"]
 			var foe: Robot = trouble["enemy"]
@@ -1068,6 +1192,66 @@ func _in_fist() -> Dictionary:
 			continue
 		hits[r] = int(hits.get(r, 0)) + 1
 	return hits
+
+
+## A kick: same idea as a punch (wind-up, can be seen and dodged, can miss) but from the
+## hip - longer reach, slower, and the only way to hurt a man who is already on the floor.
+func _kick(target: Robot) -> void:
+	kick_timer = KICK_COOLDOWN
+	_kick_pending = KICK_WINDUP
+	_kick_anim = KICK_WINDUP + 0.25
+	_kick_target = target
+	if target != null and target.down_timer <= 0.0:
+		target.notice_punch(self)
+	face_point = target.global_position if target != null else face_point
+	has_face_point = target != null
+
+
+func _melee_land(source: String) -> void:
+	if source == "kick":
+		_stomp_or_kick_land()
+	else:
+		_punch_land()
+
+
+## The boot comes down. A man on the floor within reach takes a stomp (flat damage, stays down
+## longer, ragdoll shoved); a standing one is treated like a hard punch from further out.
+func _stomp_or_kick_land() -> void:
+	var t := _kick_target
+	_kick_target = null
+	var landed := false
+	if t != null and is_instance_valid(t) and t.alive and t.down_timer > 0.0:
+		if _flat_dist(t.corpse_position()) <= KICK_REACH + 0.3 and rng.randf() < 0.55 + 0.45 * ACCURACY:
+			landed = true
+			t.take_damage(MAX_HP * STOMP_FRAC, "kick", self, 1)
+			t.down_timer += STOMP_EXTRA_DOWN
+			if t.ragdoll != null and is_instance_valid(t.ragdoll):
+				var away: Vector3 = t.corpse_position() - global_position
+				away.y = 0.0
+				away = away.normalized() if away.length_squared() > 0.01 else -global_transform.basis.z
+				t.ragdoll.shove(away * 9.0 + Vector3(0, 7.0, 0))
+	else:
+		# standing target: whoever is in the boot's arc (the fist box, stretched)
+		var hits := _in_fist()
+		if t != null and is_instance_valid(t) and t.alive and not hits.has(t) and _flat_dist(t.global_position) <= KICK_REACH and _facing(t.global_position):
+			hits[t] = 2
+		for r in hits:
+			if rng.randf() > 0.5 + 0.45 * ACCURACY:
+				continue  # swung a leg at air
+			landed = true
+			var quality := minf(float(hits[r]), float(PUNCH_FULL_HITBOXES)) / float(PUNCH_FULL_HITBOXES)
+			r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality, "kick", self, hits[r])
+			var floored := rng.randf() < KICK_KNOCKDOWN_CHANCE * quality
+			var victim: Robot = r
+			var away: Vector3 = victim.global_position - global_position
+			away.y = 0.0
+			away = away.normalized() if away.length_squared() > 0.01 else -global_transform.basis.z
+			var impulse: Vector3 = away * (14.0 + 28.0 * quality) + Vector3(0, 4.0 + 5.0 * quality, 0)
+			victim.knock_down(PUNCH_KNOCKDOWN_TIME if floored else PUNCH_FLOP_TIME, self, "kick", impulse)
+	kicked.emit(self, landed)
+	if personality.get_trait("caution") >= 0.8 and _escape_open():
+		_flee_timer = 1.6
+		decide_timer = 0.0
 
 
 func _punch_land() -> void:
@@ -1237,6 +1421,8 @@ func _reset_pose() -> void:
 	body_root.rotation = Vector3.ZERO
 	arm_l.rotation = Vector3.ZERO
 	arm_r.rotation = Vector3.ZERO
+	leg_l.rotation = Vector3.ZERO
+	leg_r.rotation = Vector3.ZERO
 
 
 ## Post-match locomotion (the utility brain is off): jog straight at a point.
@@ -1271,6 +1457,8 @@ func _walk_to(target: Vector3, _delta: float, stop_dist: float) -> bool:
 	body_root.position.y = absf(sin(t * 9.0)) * 0.08
 	arm_l.rotation.x = sin(t * 9.0) * 0.6
 	arm_r.rotation.x = -sin(t * 9.0) * 0.6
+	leg_l.rotation.x = -sin(t * 9.0) * 0.6
+	leg_r.rotation.x = sin(t * 9.0) * 0.6
 	return false
 
 

@@ -163,7 +163,7 @@ func _on_match_ended(result: Dictionary) -> void:
 		if headless:
 			print(summary["text"])
 			for rr in batch_results[-1]["robots"]:
-				print("  %s %s dmg=%d rock=%d punch=%d throws=%d/%d punches=%d/%d kd=%d kills=%d hp=%d" % [rr["name"], rr["preset"], int(rr["dmg_rock"] + rr["dmg_punch"]), int(rr["dmg_rock"]), int(rr["dmg_punch"]), rr["rock_hits"], rr["throws"], rr["punch_hits"], rr["punches"], rr["knockdowns"], rr["kills"], int(rr["hp"])])
+				print("  %s %s dmg=%d rock=%d punch=%d kick=%d throws=%d/%d punches=%d/%d kicks=%d/%d kd=%d kills=%d hp=%d" % [rr["name"], rr["preset"], int(rr["dmg_rock"] + rr["dmg_punch"] + rr["dmg_kick"]), int(rr["dmg_rock"]), int(rr["dmg_punch"]), int(rr["dmg_kick"]), rr["rock_hits"], rr["throws"], rr["punch_hits"], rr["punches"], rr["kick_hits"], rr["kicks"], rr["knockdowns"], rr["kills"], int(rr["hp"])])
 			print(JSON.stringify(summary["data"]))
 			if OS.has_environment("RBCELEB") and manager.celebration_phase != "done":
 				# let the winners finish their celebration so it gets exercised headless
@@ -203,7 +203,7 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 	var wins := [0, 0]
 	var draws := 0
 	var dur := 0.0
-	var dmg := [{"rock": 0.0, "punch": 0.0}, {"rock": 0.0, "punch": 0.0}]
+	var dmg := [{"rock": 0.0, "punch": 0.0, "kick": 0.0}, {"rock": 0.0, "punch": 0.0, "kick": 0.0}]
 	var throws := [0, 0]
 	var rock_hits := [0, 0]
 	var punches := [0, 0]
@@ -221,6 +221,7 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 		for t in 2:
 			dmg[t]["rock"] += s["damage"][t]["rock"]
 			dmg[t]["punch"] += s["damage"][t]["punch"]
+			dmg[t]["kick"] += s["damage"][t].get("kick", 0.0)
 			throws[t] += s["throws"][t]
 			rock_hits[t] += s["rock_hits"][t]
 			punches[t] += s["punches"][t]
@@ -236,8 +237,8 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 	for t in 2:
 		var acc := float(rock_hits[t]) / maxf(throws[t], 1) * 100.0
 		var pacc := float(punch_hits[t]) / maxf(punches[t], 1) * 100.0
-		txt += "%s per match: rock %d / punch %d dmg, throw acc %d%%, punch acc %d%%, %d knockdowns, %d friendly-fire dmg.  " % [
-			MatchManager.TEAM_NAMES[t], int(dmg[t]["rock"] / n), int(dmg[t]["punch"] / n), int(acc), int(pacc), kds[t] / n, int(ff[t] / n)]
+		txt += "%s per match: rock %d / punch %d / kick %d dmg, throw acc %d%%, punch acc %d%%, %d knockdowns, %d friendly-fire dmg.  " % [
+			MatchManager.TEAM_NAMES[t], int(dmg[t]["rock"] / n), int(dmg[t]["punch"] / n), int(dmg[t]["kick"] / n), int(acc), int(pacc), kds[t] / n, int(ff[t] / n)]
 	var hk := hist.keys()
 	hk.sort()
 	var hparts := PackedStringArray()
