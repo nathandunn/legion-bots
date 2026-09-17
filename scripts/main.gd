@@ -31,6 +31,7 @@ func _ready() -> void:
 	manager.dance_started.connect(_on_celebration_finished)  # the stats come up as the dance starts
 	add_child(manager)
 
+	CustomSlots.load_slots()   # the five slots of each, off this browser's disk
 	var args := _parse_args(OS.get_cmdline_user_args())
 	headless = (DisplayServer.get_name() == "headless" or args.has("sim")) and not args.has("ui")
 	if args.has("red"):

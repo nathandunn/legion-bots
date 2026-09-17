@@ -81,13 +81,13 @@ func start_match(seed_value: int = -1) -> void:
 			if pname == "":
 				r.personality = team_personalities[t].jittered(rng, 0.08)
 			else:
-				r.personality = Personality.preset(pname).jittered(rng, 0.05)
+				r.personality = CustomSlots.resolve_persona(pname).jittered(rng, 0.05)
 			var tname: String = String(player_type[t][i])
 			if tname == "":
 				r.robot_type = team_types[t].jittered(rng, 0.02)
 				r.type_name = team_type_names[t]
 			else:
-				r.robot_type = RobotType.preset(tname).jittered(rng, 0.02)
+				r.robot_type = CustomSlots.resolve_build(tname).jittered(rng, 0.02)
 				r.type_name = tname
 			r.manager = self
 			r.rng = RandomNumberGenerator.new()

@@ -106,6 +106,27 @@ const PERSONA_COLORS := [
 const TEAM_COLOR := Color(0.78, 0.78, 0.84)
 const RANDOM_COLOR := Color(0.85, 0.55, 0.85)
 
+## The five slots you fill in yourself get their own marks, so a custom never wears the same
+## badge as a shipped preset - you can always tell your own work from the factory's.
+## BOLT, RING and BARS are spoken for by Random, Team and Custom, so they are not in here -
+## a slot badge that looked like Random would be worse than no badge at all.
+const CUSTOM_SHAPES := [Shape.STAR, Shape.DIAMOND, Shape.CROSS, Shape.TRI_UP, Shape.HOURGLASS]
+const CUSTOM_COLORS := [
+	Color(0.98, 0.35, 0.55), Color(0.25, 0.92, 0.80), Color(1.00, 0.62, 0.12),
+	Color(0.55, 0.68, 1.00), Color(0.78, 0.98, 0.30),
+]
+
+
+## `slot` is 0-4. Types start two shapes along from personalities, so your first custom type and
+## your first custom personality never wear the same mark.
+static func custom_icon(slot: int, is_build: bool) -> ImageTexture:
+	var n := CUSTOM_SHAPES.size()
+	var i := (maxi(slot, 0) + (2 if is_build else 0)) % n
+	var c: Color = CUSTOM_COLORS[i]
+	if is_build:
+		c = c.lerp(Color(0.50, 0.68, 1.0), 0.30)
+	return get_icon(CUSTOM_SHAPES[i], c)
+
 
 ## `index` is the entry's position in its roster, which is fixed for a given game, so a badge
 ## always means the same thing. The three reserved names get their own marks wherever they sit.
