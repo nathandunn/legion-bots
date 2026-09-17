@@ -200,7 +200,7 @@ func _on_impact_area(area: Area3D) -> void:
 	var rel_v := linear_velocity - robot.velocity
 	var ke := 0.5 * mass_kg * rel_v.length_squared()
 	var punch := clampf(ke / KE_REF, 0.0, 1.3)
-	var dmg := Robot.MAX_HP * MAX_DAMAGE_FRAC * quality * punch
+	var dmg := Robot.MAX_HP * MAX_DAMAGE_FRAC * quality * punch * thrower.dmg_mult
 	if dmg < 1.0:
 		return  # a rock rolling over your foot is not a hit
 	robot.take_damage(dmg, "rock", thrower, count)

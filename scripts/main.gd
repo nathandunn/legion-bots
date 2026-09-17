@@ -39,6 +39,16 @@ func _ready() -> void:
 	if args.has("blue"):
 		manager.team_personalities[1] = Personality.preset(args["blue"])
 		manager.team_preset_names[1] = args["blue"]
+	if args.has("type"):
+		for t in 2:
+			manager.team_types[t] = RobotType.preset(args["type"])
+			manager.team_type_names[t] = args["type"]
+	if args.has("redtype"):
+		manager.team_types[0] = RobotType.preset(args["redtype"])
+		manager.team_type_names[0] = args["redtype"]
+	if args.has("bluetype"):
+		manager.team_types[1] = RobotType.preset(args["bluetype"])
+		manager.team_type_names[1] = args["bluetype"]
 	if args.has("seed"):
 		_base_seed = int(args["seed"])
 

@@ -18,6 +18,13 @@ var world: Node3D
 var arena: Arena
 var team_personalities: Array[Personality] = [Personality.preset("Slinger"), Personality.preset("Brawler")]
 var team_preset_names: Array[String] = ["Slinger", "Brawler"]
+## What each team is made of, and the per-robot overrides. An entry of "" in the two override
+## arrays means "whatever the team is set to", which is how the whole-team pickers stay
+## meaningful after you have fiddled with one robot.
+var team_types: Array[RobotType] = [RobotType.preset("Even"), RobotType.preset("Even")]
+var team_type_names: Array[String] = ["Even", "Even"]
+var player_persona := [["", "", "", "", ""], ["", "", "", "", ""]]
+var player_type := [["", "", "", "", ""], ["", "", "", "", ""]]
 var robots: Array[Robot] = []
 var rocks: Array[Rock] = []
 var time_left := INF
@@ -69,7 +76,19 @@ func start_match(seed_value: int = -1) -> void:
 			r.team = t
 			r.team_color = TEAM_COLORS[t]
 			r.robot_name = "%s%d" % [TEAM_NAMES[t][0], i + 1]
-			r.personality = team_personalities[t].jittered(rng, 0.08)
+			# a robot follows its team unless it has been given its own personality or type
+			var pname: String = String(player_persona[t][i])
+			if pname == "":
+				r.personality = team_personalities[t].jittered(rng, 0.08)
+			else:
+				r.personality = Personality.preset(pname).jittered(rng, 0.05)
+			var tname: String = String(player_type[t][i])
+			if tname == "":
+				r.robot_type = team_types[t].jittered(rng, 0.02)
+				r.type_name = team_type_names[t]
+			else:
+				r.robot_type = RobotType.preset(tname).jittered(rng, 0.02)
+				r.type_name = tname
 			r.manager = self
 			r.rng = RandomNumberGenerator.new()
 			r.rng.seed = rng.randi()
@@ -85,7 +104,8 @@ func start_match(seed_value: int = -1) -> void:
 			r.knocked_down.connect(_on_knocked_down)
 			world.add_child(r)
 			robots.append(r)
-			robot_stats[r.robot_name] = {"name": r.robot_name, "team": t, "preset": r.personality.label(),
+			robot_stats[r.robot_name] = {"name": r.robot_name, "team": t,
+				"preset": (pname if pname != "" else team_preset_names[t]), "type": r.type_name,
 				"dmg_rock": 0.0, "dmg_punch": 0.0, "dmg_kick": 0.0, "dmg_taken": 0.0, "throws": 0, "rock_hits": 0,
 				"punches": 0, "punch_hits": 0, "kicks": 0, "kick_hits": 0, "knockdowns": 0, "kills": 0, "hp": r.hp, "alive": true}
 
@@ -161,6 +181,16 @@ func alive_count(team: int) -> int:
 	return n
 
 
+## Types change how big a robot's HP pool is, so "team HP left" needs the team's own total
+## rather than five times the reference constant.
+func team_max_hp(team: int) -> float:
+	var s := 0.0
+	for r in robots:
+		if r.team == team:
+			s += r.max_hp
+	return maxf(s, 1.0)
+
+
 func team_hp(team: int) -> float:
 	var s := 0.0
 	for r in robots:
@@ -208,6 +238,7 @@ func end_match(reason: String) -> void:
 	for r in robots:
 		var rs: Dictionary = robot_stats[r.robot_name]
 		rs["hp"] = r.hp
+		rs["max_hp"] = r.max_hp
 		rs["alive"] = r.alive
 		per_robot.append(rs.duplicate())
 	per_robot.sort_custom(func(a, b): return a["team"] < b["team"] if a["team"] != b["team"] else a["name"] < b["name"])
@@ -220,7 +251,9 @@ func end_match(reason: String) -> void:
 		"duration": elapsed,
 		"alive": [a0, a1],
 		"hp": [hp0, hp1],
+		"max_hp": [team_max_hp(0), team_max_hp(1)],
 		"presets": team_preset_names.duplicate(),
+		"types": team_type_names.duplicate(),
 		"stats": stats.duplicate(true),
 	}
 	if winner >= 0:
