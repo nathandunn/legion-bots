@@ -7,7 +7,7 @@ signal match_ended(result: Dictionary)
 signal celebration_finished(match_index: int)
 signal dance_started(match_index: int)
 
-static var TEAM_SIZE := 5   # per side, 1..50; --size=N or ?size=N
+static var TEAM_SIZE := 20   # per side, 1..50; --size=N or ?size=N
 const MATCH_TIME := 150.0   # only the headless sims are capped (time_limit); a real match runs until a team is gone
 const ARENA_HALF := 20.0
 const ROCKS_PER_ROBOT := 0.5   # ~1 rock per 2 robots
