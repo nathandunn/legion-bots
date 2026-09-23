@@ -36,6 +36,11 @@ func _ready() -> void:
 	headless = (DisplayServer.get_name() == "headless" or args.has("sim")) and not args.has("ui")
 	if args.has("size"):
 		MatchManager.TEAM_SIZE = clampi(int(args["size"]), 1, 50)
+	if OS.has_feature("web"):
+		# the proven Dodgeball form: ask the page for exactly one parameter
+		var qs: String = str(JavaScriptBridge.eval("new URLSearchParams(location.search).get('size') || ''", true))
+		if qs.is_valid_int():
+			MatchManager.TEAM_SIZE = clampi(int(qs), 1, 50)
 	if args.has("red"):
 		manager.team_personalities[0] = Personality.preset(args["red"])
 		manager.team_preset_names[0] = args["red"]

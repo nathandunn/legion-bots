@@ -121,6 +121,7 @@ func start_match(seed_value: int = -1) -> void:
 				"dmg_rock": 0.0, "dmg_punch": 0.0, "dmg_kick": 0.0, "dmg_taken": 0.0, "throws": 0, "rock_hits": 0,
 				"punches": 0, "punch_hits": 0, "kicks": 0, "kick_hits": 0, "knockdowns": 0, "kills": 0, "hp": r.hp, "alive": true}
 
+	print("LEGION match %d: %d a side, %d robots on the field" % [match_index, TEAM_SIZE, robots.size()])
 	var n_rocks := int(ceil(TEAM_SIZE * 2 * ROCKS_PER_ROBOT))
 	var tries := 0
 	while rocks.size() < n_rocks and tries < 200:
