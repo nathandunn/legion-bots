@@ -34,6 +34,8 @@ func _ready() -> void:
 	CustomSlots.load_slots()   # the five slots of each, off this browser's disk
 	var args := _parse_args(OS.get_cmdline_user_args())
 	headless = (DisplayServer.get_name() == "headless" or args.has("sim")) and not args.has("ui")
+	if args.has("size"):
+		MatchManager.TEAM_SIZE = clampi(int(args["size"]), 1, 50)
 	if args.has("red"):
 		manager.team_personalities[0] = Personality.preset(args["red"])
 		manager.team_preset_names[0] = args["red"]
@@ -117,6 +119,14 @@ func _parse_args(list: PackedStringArray) -> Dictionary:
 		if a.begins_with("--"):
 			var kv := a.substr(2).split("=", true, 1)
 			d[kv[0]] = kv[1] if kv.size() > 1 else "1"
+	# a browser has no command line: the query string stands in for it
+	if OS.has_feature("web"):
+		var q: String = str(JavaScriptBridge.eval("window.location.search", true))
+		if q.begins_with("?"):
+			for part in q.substr(1).split("&"):
+				var kv2: PackedStringArray = String(part).split("=", true, 1)
+				if kv2[0] != "":
+					d[kv2[0]] = kv2[1].uri_decode() if kv2.size() > 1 else "1"
 	return d
 
 

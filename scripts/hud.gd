@@ -1,5 +1,7 @@
 class_name Hud
 extends CanvasLayer
+
+const MAX_PICKERS := 10   # per-robot pickers shown; the rest follow the team
 ## All UI built in code: scoreboard, controls, team setup overlay, results overlay.
 ## Lays itself out for phone widths too (rows wrap, overlays shrink to the screen).
 
@@ -150,6 +152,19 @@ func setup(m: MatchManager) -> void:
 	batch_btn.text = "Batch x10"
 	batch_btn.pressed.connect(func(): _close_overlays(); batch_requested.emit(10))
 	row2.add_child(batch_btn)
+	var size_btn := OptionButton.new()
+	var sizes: Array = [5, 10, 20, 30, 50]
+	for n in sizes:
+		size_btn.add_item("%d v %d" % [n, n])
+	size_btn.select(sizes.find(MatchManager.TEAM_SIZE))
+	size_btn.tooltip_text = "Army size per side (reloads the page)"
+	size_btn.item_selected.connect(func(ix: int):
+		var n: int = sizes[ix]
+		if OS.has_feature("web"):
+			JavaScriptBridge.eval("window.location.search = '?size=%d'" % n)
+		else:
+			MatchManager.TEAM_SIZE = n)
+	row2.add_child(size_btn)
 	custom_btn = Button.new()
 	custom_btn.text = "Make your own"
 	custom_btn.toggle_mode = true
@@ -346,23 +361,23 @@ func _build_team_panel(t: int) -> Control:
 	per.add_theme_color_override("font_color", Color(0.8, 0.8, 0.85))
 	box.add_child(per)
 	var grid := GridContainer.new()
-	grid.columns = MatchManager.TEAM_SIZE + 1
+	grid.columns = mini(MatchManager.TEAM_SIZE, MAX_PICKERS) + 1
 	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 2)
 	box.add_child(grid)
 	grid.add_child(_mini_label(""))
-	for i in MatchManager.TEAM_SIZE:
+	for i in mini(MatchManager.TEAM_SIZE, MAX_PICKERS):
 		var nl := _mini_label("%s%d" % [MatchManager.TEAM_NAMES[t][0], i + 1])
 		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		nl.custom_minimum_size.x = 34
 		grid.add_child(nl)
 	grid.add_child(_mini_label("Person."))
-	for i in MatchManager.TEAM_SIZE:
+	for i in mini(MatchManager.TEAM_SIZE, MAX_PICKERS):
 		var b := _picker(t, i, false)
 		pp_btns[t].append(b)
 		grid.add_child(b)
 	grid.add_child(_mini_label("Type"))
-	for i in MatchManager.TEAM_SIZE:
+	for i in mini(MatchManager.TEAM_SIZE, MAX_PICKERS):
 		var b := _picker(t, i, true)
 		pt_btns[t].append(b)
 		grid.add_child(b)
@@ -762,7 +777,7 @@ func _refresh_pickers() -> void:
 	for t in 2:
 		var tp: String = manager.team_preset_names[t]
 		var tb: String = manager.team_build_names[t]
-		for i in MatchManager.TEAM_SIZE:
+		for i in mini(MatchManager.TEAM_SIZE, MAX_PICKERS):
 			var who := "%s%d" % [MatchManager.TEAM_NAMES[t][0], i + 1]
 			var pn: String = String(manager.player_persona[t][i])
 			var pb: Button = pp_btns[t][i]

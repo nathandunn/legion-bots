@@ -3,7 +3,7 @@ config_version=5
 
 [application]
 
-config/name="Rock Bots"
+config/name="Legion Bots"
 config/description="AI personality sim: 5v5 robots throwing rocks and punching. Part of the Precog sim suite."
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.4", "GL Compatibility")

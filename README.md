@@ -1,4 +1,4 @@
-# Rock Bots
+# Legion Bots — TABS-style armies on the Rock Bots personality model (v0: Rock Bots at up to 50 a side)
 
 5-a-side AI robot brawl in Godot 4 (3D). Robots throw rocks and punch. Pure spectator sim —
 you set each team's personality, watch, or batch-run matches for statistics.

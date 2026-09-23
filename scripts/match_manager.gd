@@ -7,7 +7,7 @@ signal match_ended(result: Dictionary)
 signal celebration_finished(match_index: int)
 signal dance_started(match_index: int)
 
-const TEAM_SIZE := 5
+static var TEAM_SIZE := 5   # per side, 1..50; --size=N or ?size=N
 const MATCH_TIME := 150.0   # only the headless sims are capped (time_limit); a real match runs until a team is gone
 const ARENA_HALF := 20.0
 const ROCKS_PER_ROBOT := 0.5   # ~1 rock per 2 robots
@@ -58,6 +58,12 @@ func start_match(seed_value: int = -1) -> void:
 	stats = _fresh_stats()
 	robot_stats = {}
 
+	for t in 2:
+		while player_persona[t].size() < TEAM_SIZE:
+			player_persona[t].append("")
+		while player_type[t].size() < TEAM_SIZE:
+			player_type[t].append("")
+
 	# interleave + shuffle spawn order so neither team gets first-strike from tree order
 	var slots := []
 	for t in 2:
@@ -92,8 +98,14 @@ func start_match(seed_value: int = -1) -> void:
 			r.manager = self
 			r.rng = RandomNumberGenerator.new()
 			r.rng.seed = rng.randi()
-			var x := -15.0 if t == 0 else 15.0
-			var z := lerpf(-8.0, 8.0, float(i) / float(maxi(TEAM_SIZE - 1, 1)))
+			# small teams stand in the old single line; big ones form ranks, back rank at the wall
+			var per_row: int = mini(TEAM_SIZE, 10)
+			var row: int = i / per_row
+			var col: int = i % per_row
+			var span: float = 8.0 if TEAM_SIZE <= 5 else 17.0
+			var z := lerpf(-span, span, float(col) / float(maxi(per_row - 1, 1)))
+			var depth: float = 15.0 if TEAM_SIZE <= 5 else 17.0 - float(row) * 2.4
+			var x := -depth if t == 0 else depth
 			r.position = Vector3(x + rng.randf_range(-1.5, 1.5), 0.0, z)
 			r.rotation.y = PI * 0.5 if t == 0 else -PI * 0.5
 			r.damaged.connect(_on_damaged)
