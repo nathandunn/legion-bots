@@ -153,7 +153,7 @@ func setup(m: MatchManager) -> void:
 	batch_btn.pressed.connect(func(): _close_overlays(); batch_requested.emit(10))
 	row2.add_child(batch_btn)
 	var size_btn := OptionButton.new()
-	var sizes: Array = [5, 10, 20, 30, 50]
+	var sizes: Array = [5, 10, 15, 20]
 	for n in sizes:
 		size_btn.add_item("%d v %d" % [n, n])
 	size_btn.select(sizes.find(MatchManager.TEAM_SIZE))
