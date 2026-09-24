@@ -116,6 +116,19 @@ body {
 	text-align: center;
 	z-index: 1;
 }
+
+#army-picker { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, #2a3440 0%, #11161c 75%); color: #f0ece2;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; padding: env(safe-area-inset-top, 0px) 16px env(safe-area-inset-bottom, 0px); box-sizing: border-box; }
+#army-picker .card { width: 100%; max-width: 420px; text-align: center; }
+#army-picker h1 { margin: 0 0 4px; font-size: 2.1rem; letter-spacing: 0.02em; }
+#army-picker p { margin: 0 0 20px; opacity: 0.75; font-size: 1rem; }
+#army-picker button { display: flex; width: 100%; justify-content: space-between; align-items: baseline; gap: 12px;
+  margin: 0 0 10px; padding: 14px 18px; border: 1px solid #4a5868; border-radius: 12px; background: #1c242d;
+  color: inherit; font: inherit; font-size: 1.15rem; cursor: pointer; }
+#army-picker button:hover, #army-picker button:focus-visible { background: #28333f; border-color: #e0a84a; outline: none; }
+#army-picker button.rec { border-color: #e0a84a; }
+#army-picker button small { font-size: 0.8rem; opacity: 0.7; }
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
@@ -132,6 +145,18 @@ body {
 		-->
 		<a class="back-to-apps back-to-apps--pill" href="https://apps.precogsoftwareservices.com">&#8592; Apps</a>
 
+
+		<div id="army-picker" hidden>
+			<div class="card">
+				<h1>Legion Bots</h1>
+				<p>How big are the armies?</p>
+				<button data-size="5">5 v 5 <small>the old brawl</small></button>
+				<button data-size="10">10 v 10 <small>skirmish</small></button>
+				<button data-size="20" class="rec">20 v 20 <small>recommended</small></button>
+				<button data-size="30">30 v 30 <small>battle</small></button>
+				<button data-size="50">50 v 50 <small>heavy on a phone</small></button>
+			</div>
+		</div>
 		<canvas id="canvas">
 			Your browser does not support the canvas tag.
 		</canvas>
@@ -236,7 +261,22 @@ const engine = new Engine(GODOT_CONFIG);
 			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
 			displayFailureNotice(missingMsg + missing.join('\n'));
 		}
+	} else if (!/^\d+$/.test(new URLSearchParams(location.search).get('size') || '')) {
+		// no army size in the URL: ask before downloading the engine, so choosing never costs a second load
+		const picker = document.getElementById('army-picker');
+		picker.hidden = false;
+		picker.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+			const q = new URLSearchParams(location.search);
+			q.set('size', b.dataset.size);
+			history.replaceState(null, '', '?' + q.toString());
+			picker.remove();
+			startEngine();
+		}));
 	} else {
+		startEngine();
+	}
+
+	function startEngine() {
 		setStatusMode('progress');
 		engine.startGame({
 			'onProgress': function (current, total) {
