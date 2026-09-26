@@ -165,28 +165,34 @@ func _ready() -> void:
 ## of Even robots fights precisely the match it always did. The spans are Melee Bots', levelled
 ## there against Even and re-checked here, because the two games share this robot.
 func apply_type() -> void:
-	var brawn := robot_type.factor("brawn")
-	var spd := robot_type.factor("speed")
-	var grit := robot_type.factor("grit")
-	var reflex := robot_type.factor("reflex")
-	var aim := robot_type.factor("aim")
-	# Melee Bots' spans were levelled in a game decided by weapon timing; a bare-knuckle
+	if unit_class == null:
+		unit_class = UnitClass.of(UnitClass.DEFAULT_ID)
+	# the class asks the question, not the type: a property is worth what it is worth to
+	# *this* class (UnitClass.SPANS), and every class still scores 1.0 at an even 0.2 share.
+	var brawn := unit_class.factor(robot_type, "brawn")
+	var spd := unit_class.factor(robot_type, "speed")
+	var grit := unit_class.factor(robot_type, "grit")
+	var reflex := unit_class.factor(robot_type, "reflex")
+	var aim := unit_class.factor(robot_type, "aim")
+	# M1/M2: Melee Bots' spans were levelled in a game decided by weapon timing; a bare-knuckle
 	# brawl is not that game. The first probe with those numbers had Bruiser on 90 % and Tank
 	# on 80 % against Even, with Runner, Sniper and Ghost between 20 and 30 %, so brawn and
 	# grit were reined in and the other three widened over three passes (24 matches a probe,
 	# Balanced both sides). Where it landed: Bruiser 63 %, Tank 63 %, Ghost 50 %, Runner 38 %,
-	# Sniper 25 %, mean 48 %. Aim stays the weak one and no span will fix that - rocks are
-	# scarce here and most of the fight is fists, so accuracy has little to be accurate with.
-	max_hp = MAX_HP * clampf(0.78 + 0.22 * grit, 0.55, 1.75)
-	move_speed = SPEED * clampf(0.70 + 0.30 * spd, 0.55, 1.45)
-	dmg_mult = clampf(0.68 + 0.32 * brawn, 0.45, 1.85)
-	accuracy = clampf(0.28 + 0.42 * aim, 0.26, 0.97)
-	windup_mult = clampf(1.25 - 0.25 * reflex, 0.5, 1.45)
-	react_mult = clampf(1.27 - 0.27 * reflex, 0.45, 1.5)
+	# Sniper 25 %, mean 48 %. M3 then split those spans per class (UnitClass.SPANS), because
+	# "aim is weak" was never true of a Slinger - it was true of the average over three
+	# classes, two of which never throw a stone in their lives.
+	# The clamps are headroom for the per-class gains, not part of the balance: none of the
+	# six type presets reaches any of them (the only one that ever did was aim, which still
+	# tops out at 0.97 because an accuracy above that is indistinguishable from perfect).
+	max_hp = MAX_HP * clampf(0.78 + 0.22 * grit, 0.50, 2.00)
+	move_speed = SPEED * clampf(0.70 + 0.30 * spd, 0.50, 1.60)
+	dmg_mult = clampf(0.68 + 0.32 * brawn, 0.40, 2.20)
+	accuracy = clampf(0.28 + 0.42 * aim, 0.18, 0.97)
+	windup_mult = clampf(1.25 - 0.25 * reflex, 0.45, 1.60)
+	react_mult = clampf(1.27 - 0.27 * reflex, 0.40, 1.60)
 	# ...and then the class, which is a plain multiplier on top, so an Even type (every
 	# factor 1.0) reproduces each class's base numbers exactly.
-	if unit_class == null:
-		unit_class = UnitClass.of(UnitClass.DEFAULT_ID)
 	move_speed *= unit_class.speed_mult
 	melee_mult = unit_class.melee_mult
 	hp = max_hp

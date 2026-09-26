@@ -1,6 +1,10 @@
 extends Node3D
 ## Entry point. Builds the world, wires the HUD, runs matches; supports headless batch sim:
 ##   godot --headless --path . -- --sim=20 [--red=Brawler --blue=Slinger] [--seed=1]
+## and the M3 calibration overrides:
+##   --costs=brawler:26,shield:44          class prices, for this run only
+##   --gains=slinger.aim:1.4,shield.curve:0.6   type spans per class, for this run only
+##   --types=SpecAim/0.1/0.1/0.1/0.1/0.6   a named type, for this run only
 
 # Matches never start by themselves: the results panel asks. Only a batch chains on.
 const CELEBRATION_CAP := 48.0      # results come up by then whatever the winners are doing
@@ -35,6 +39,14 @@ func _ready() -> void:
 
 	CustomSlots.load_slots()   # the five slots of each, off this browser's disk
 	var args := _parse_args(OS.get_cmdline_user_args())
+	# M3 calibration knobs, read before anything is spawned so a tuning run can probe a
+	# price list or a set of type spans without rewriting the scripts between probes.
+	if args.has("costs"):
+		UnitClass.apply_cost_overrides(String(args["costs"]))
+	if args.has("gains"):
+		UnitClass.apply_span_overrides(String(args["gains"]))
+	if args.has("types"):
+		RobotType.apply_type_overrides(String(args["types"]))
 	headless = (DisplayServer.get_name() == "headless" or args.has("sim")) and not args.has("ui")
 	if args.has("size"):
 		MatchManager.TEAM_SIZE = clampi(int(args["size"]), 1, MatchManager.MAX_SIZE)
@@ -189,6 +201,11 @@ func _army_arg_label(t: int) -> String:
 ## re-derive by hand every time the costs move.
 func _class_check() -> void:
 	var even := RobotType.preset("Even")
+	for cid in UnitClass.PLACEABLE:
+		var sp := PackedStringArray()
+		for pr in RobotType.PROPS:
+			sp.append("%s %.2f" % [pr, UnitClass.span_value(cid, pr)])
+		print("  spans %-8s curve %.2f  %s" % [UnitClass.label_of(cid), UnitClass.span_value(cid, "curve"), ", ".join(sp)])
 	print("class check (Even type, no jitter): base HP %d, speed %.2f, punch %.1f" % [
 		int(Robot.MAX_HP), Robot.SPEED, Robot.MAX_HP * Robot.PUNCH_MAX_FRAC])
 	var bad := 0
@@ -268,7 +285,7 @@ func _on_match_ended(result: Dictionary) -> void:
 			print(summary["text"])
 			for rr in batch_results[-1]["robots"]:
 				print("  %s %s dmg=%d rock=%d punch=%d kick=%d throws=%d/%d punches=%d/%d kicks=%d/%d kd=%d kills=%d hp=%d" % [rr["name"], rr["preset"], int(rr["dmg_rock"] + rr["dmg_punch"] + rr["dmg_kick"]), int(rr["dmg_rock"]), int(rr["dmg_punch"]), int(rr["dmg_kick"]), rr["rock_hits"], rr["throws"], rr["punch_hits"], rr["punches"], rr["kick_hits"], rr["kicks"], rr["knockdowns"], rr["kills"], int(rr["hp"])])
-			print(JSON.stringify(summary["data"]))
+			print("SUMMARY " + JSON.stringify(summary["data"]))
 			if OS.has_environment("RBCELEB") and manager.celebration_phase != "done":
 				# let the winners finish their celebration so it gets exercised headless
 				manager.celebration_finished.connect(func(_i: int): _celeb_report(); get_tree().quit())

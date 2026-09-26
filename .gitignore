@@ -1,3 +1,8 @@
 .godot/
 build/
 *.tmp
+
+# godot --import treats the exported dist/ images as project resources
+dist/*.import
+# tools/calibrate.py scratch state
+tools/.calibrate_state.json

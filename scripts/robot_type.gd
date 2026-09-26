@@ -51,7 +51,28 @@ func _init(from: Dictionary = {}) -> void:
 	normalize()
 
 
+## Named types handed in on the command line (--types=), for tools/calibrate.py. The span
+## probe needs a specialist - 0.6 in one property, 0.1 in the other four - and those have no
+## business in the shipped preset list, so they live here and only for the run that asked.
+static var extra := {}
+
+
+## --types=SpecAim/0.1/0.1/0.1/0.1/0.6,SpecGrit/0.1/0.1/0.6/0.1/0.1  (values in PROPS order)
+static func apply_type_overrides(spec: String) -> void:
+	for part in spec.split(",", false):
+		var f: PackedStringArray = String(part).strip_edges().split("/", false)
+		if f.size() != PROPS.size() + 1:
+			push_warning("ignoring type override '%s'" % part)
+			continue
+		var d := {}
+		for i in PROPS.size():
+			d[PROPS[i]] = maxf(float(f[i + 1]), 0.0)
+		extra[String(f[0]).strip_edges()] = d
+
+
 static func preset(preset_name: String) -> RobotType:
+	if extra.has(preset_name):
+		return RobotType.new(extra[preset_name])
 	if preset_name == "Random":
 		var rng := RandomNumberGenerator.new()
 		rng.randomize()
