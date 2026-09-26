@@ -272,13 +272,20 @@ Four compositions at the fitted prices, every pair, mirrored, n = 22 a pairing (
 | Stones first | Even thirds | 54.5 % | ±10.6 |
 | Wall first | Even thirds | 68.2 % | ±9.9 |
 
-Average over its three games: **Fists first 60.6 %, Wall first 65.1 %, Stones first 51.5 %,
-Even thirds 36.4 %**. The two committed compositions beat the balanced one, and Even thirds is
-the weakest — 1.3σ below even on its three pairings. That is the cycle again: a lopsided army
-beats a diversified one because it always has the winning half of some matchup and enough of it
-to finish the job. The prices hold to within about 1.5σ outside the single-class fights, but
-**the bigger lesson is that a diversified army is not currently rewarded**, and that is a design
-question rather than a pricing one.
+Average over its three games, 66 battles each (σ 6.2):
+
+| composition | mean win rate | from even |
+|---|---|---|
+| Fists first (10 Br + 3 Sl + 2 Sh) | **60.6 %** | +1.7σ |
+| Wall first (2 Br + 3 Sl + 10 Sh) | 53.0 % | +0.5σ |
+| Stones first (2 Br + 14 Sl + 2 Sh) | 45.4 % | −0.7σ |
+| Even thirds (4 Br + 8 Sl + 4 Sh) | **40.9 %** | −1.5σ |
+
+The two middle compositions are inside one sigma, so the prices do hold outside the single-class
+fights. But the ordering is not noise: the most committed army is the best and the balanced one is
+the worst. That is the cycle again — a lopsided army always owns the winning half of some matchup
+and has enough of it to finish the job. **A diversified army is not currently rewarded**, and that
+is a design question rather than a pricing one.
 
 ## Re-running the M2 verification battles
 
