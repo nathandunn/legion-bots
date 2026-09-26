@@ -16,15 +16,19 @@ func _initialize() -> void:
 	print("cell(0,0) -> ", w, "  back -> ", MatchManager.world_to_cell(w))
 	if MatchManager.world_to_cell(w) != Vector2(0, 0):
 		fails += 1
-	# budget refusal: 500 gold of shields = 10, the 11th must be refused
+	# budget refusal: as many shields as 500 gold buys, and one more must be refused. The count
+	# is derived from the price, not written down - M3 moved the Shield from 50 g to 34 g and a
+	# hard-coded 10 turned a correct game into a failing test.
+	var want_shields := mini(MatchManager.GOLD_BUDGET / UnitClass.cost_of("shield"), MatchManager.MAX_SIZE)
 	var placed := 0
 	for row in 12:
 		for col in 9:
 			var why := m.add_unit(0, "shield", Vector2(col, row), "Tank", "Guardian")
 			if why == "":
 				placed += 1
-	print("shields placed on 500 gold: ", placed, " cost ", m.army_cost(0), " units ", m.army_units(0))
-	if placed != 10:
+	print("shields placed on %d gold: " % MatchManager.GOLD_BUDGET, placed, " of ", want_shields,
+		" cost ", m.army_cost(0), " units ", m.army_units(0))
+	if placed != want_shields:
 		fails += 1
 	# other half refused
 	print("blue cell for red: '", m.add_unit(0, "brawler", Vector2(12, 5), "Even", "Brawler"), "'")

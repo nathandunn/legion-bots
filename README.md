@@ -26,17 +26,24 @@ simply walks past the rocks rather than fetching one it could never throw.
 
 | class | cost | fists / boots | rocks | notes |
 |---|---|---|---|---|
-| **Brawler** | 20 g | full damage | never picks one up | the cheap body |
-| **Slinger** | 30 g | 0.6× damage | throws | soft hands up close |
-| **Shield** | 50 g | 1.2× damage | never throws | a shield on the left arm: a rock arriving within ±60° of its facing is blocked with chance `0.5 + 0.4 × reflex skill` (0.7 for an Even type). A block is total — no damage, no knockdown, the rock drops dead. Moves at 0.85× |
+| **Brawler** | 35 g | full damage | never picks one up | the plain body |
+| **Slinger** | 25 g | 0.6× damage | throws | soft hands up close |
+| **Shield** | 34 g | 1.2× damage | never throws | a shield on the left arm: a rock arriving within ±60° of its facing is blocked with chance `0.5 + 0.4 × reflex skill` (0.7 for an Even type). A block is total — no damage, no knockdown, the rock drops dead. Moves at 0.85× |
 | *Mixed* | 30 g | full | throws | the v0 robot. Internal only: quick battles and legacy `--red=Brawler` |
 
-**The costs are placeholders.** They live in one table (`scripts/unit_class.gd`) and M3
-calibrates them; the headless summary prints `kills_per_gold` by class, which is the number
-to calibrate against. As it stands the Brawler is far and away the best buy (see the last
-section).
+**The costs were fitted by simulation in M3** — `tools/calibrate.py`, about 4,300 headless
+battles, written up in `tools/calibration_report.md`. At 500 gold each price buys 14 Brawlers,
+20 Slingers or 14 Shields, and every class's mean win rate against the field is inside one
+sigma of even (Brawler 53.3 %, Slinger 50.8 %, Shield 45.8 %, n = 120 a class, σ 4.6).
 
-An Even type (0.2 in all five properties) reproduces each class's base numbers exactly:
+The three classes are a **cycle**, not a ranking, and the single-class matchups stay lopsided
+on purpose: Slinger beats Brawler 67/33, Brawler beats Shield 90/10, Shield beats Slinger
+73/27. It is mixed armies that come out even.
+
+**What a type property is worth depends on the class** (`UnitClass.SPANS`, also fitted in M3):
+aim decides a Slinger's afternoon and reaches a Brawler only through his punch accuracy, so
+each class has its own `curve` and its own five gains. An Even type (0.2 in all five) still
+reproduces every class's base numbers exactly, whatever the spans say:
 
 ```
 godot --headless --path . -- --classcheck
@@ -125,9 +132,9 @@ Preset armies, all inside 500 gold and 20 units:
 
 | preset | units | gold |
 |---|---|---|
-| Brawler Mob | 20 Brawler (Bruiser / Brawler) | 400 |
-| Slinger Line | 5 Shield + 8 Slinger, shields in front | 490 |
-| Shield Wall | 7 Shield + 5 Slinger | 500 |
+| Brawler Mob | 14 Brawler (Bruiser / Brawler) | 490 |
+| Slinger Line | 4 Shield + 14 Slinger, shields in front | 486 |
+| Shield Wall | 11 Shield + 5 Slinger | 499 |
 
 Saved armies are the third kind of slot in `scripts/custom_slots.gd`, beside the five
 personality and five type slots, in the same `user://custom_slots.json`. Every field is
@@ -153,6 +160,10 @@ godot --headless --path . -- --sim=20 --red=Slinger --blue=Brawler --seed=1
 | `--red="Shield Wall"` | one of the three preset armies |
 | `--red=brawler:10:Bruiser:Brawler,slinger:6:Sniper:Slinger` | squads: `class:count:type:personality` |
 | `--red=Slinger` | legacy: a personality for the whole side, `TEAM_SIZE` Mixed robots |
+
+| `--costs=brawler:26,shield:44` | override the price list for one run (calibration) |
+| `--gains=slinger.aim:1.4,shield.curve:0.6` | override the per-class type spans for one run |
+| `--types=SpecAim/0.1/0.1/0.1/0.1/0.6` | register a named type for one run |
 
 Headless armies are laid out on their own half automatically (shields in front, then fists,
 then the rock throwers). `--sandbox` lifts the gold limit. The SUMMARY json carries
@@ -197,14 +208,20 @@ scripts/unit_class.gd     the class table: costs and what each class may do
 scripts/placement.gd      the army builder - overhead field, grid, bottom bar
 scripts/custom_slots.gd   your five personalities, five types and five armies
 scripts/army_selftest.gd  headless self-test for the army model
+tools/calibrate.py        fit the class costs and the per-class type spans by simulation
+tools/fit_costs.py        solve the price list from the measured count-response curves
+tools/calibration_report.md  method, numbers and what is still off
 ```
 
-## Next ideas (M3)
+## Next ideas (M4)
 
-- **Calibrate the costs.** 30 headless battles at the placeholder prices: Brawler Mob beats
-  both shield armies 6–0 in about 24 s, and the two shield armies are 3–3 with each other.
-  Kills per gold: Brawler 0.030–0.059, Slinger 0.006–0.022, Shield 0.000–0.012. The Brawler
-  is underpriced, or the Shield is overpriced, or both.
+- **Give aim something that pays past accuracy 0.97.** It is the one property no span can
+  level: the accuracy clamp is reached at a 0.4 share, so a 0.6-share aim specialist has paid
+  four properties for nothing. Throw range, lead quality, or damage for a well-placed stone
+  would all give aim an upside to scale. See `tools/calibration_report.md`.
+- **Give the Shield something against a fist.** It stops rocks and nothing else, which is why
+  the Brawler beats it 90/10 at equal gold and why the roster is a hard cycle rather than a
+  soft one.
 - Pinch-zoom and pan on the placement camera: a 2 m cell is ~21 px on a 412-wide phone.
 - Swap `Personality` for the sim-core schema and drive it from agent-forge sweeps.
 - Rock pickup animation, throw arc preview, hit numbers.
