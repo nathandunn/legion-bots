@@ -9,6 +9,7 @@ signal threw(robot: Robot)
 signal punched(robot: Robot, landed: bool)
 signal kicked(robot: Robot, landed: bool)
 signal knocked_down(robot: Robot, by: Robot, source: String)
+signal blocked(robot: Robot, thrower: Robot)
 
 const SPEED := 6.0
 const MAX_HP := 200.0
@@ -55,6 +56,10 @@ var personality: Personality
 ## Everything below it is derived in apply_type(); an even type reproduces the old constants.
 var robot_type: RobotType
 var type_name := ""        # set by the manager; falls back to the closest preset
+## What this unit is allowed to do - see unit_class.gd. Set by the manager before add_child;
+## the brain consults it so that a forbidden action is never even scored.
+var unit_class: UnitClass
+var melee_mult := 1.0      # the class's hand: a slinger's 0.6, a shield's 1.2
 var max_hp := MAX_HP
 var move_speed := SPEED
 var accuracy := ACCURACY
@@ -104,6 +109,7 @@ var _stream: CPUParticles3D = null
 var _puddle: MeshInstance3D = null
 
 var hitboxes: Array[Area3D] = []
+var shield_mesh: MeshInstance3D = null
 var fist: Area3D
 var body_root: Node3D
 var arm_r: MeshInstance3D
@@ -145,6 +151,8 @@ func _ready() -> void:
 		personality = Personality.preset("Balanced")
 	if robot_type == null:
 		robot_type = RobotType.preset("Even")
+	if unit_class == null:
+		unit_class = UnitClass.of(UnitClass.DEFAULT_ID)
 	apply_type()
 	decide_timer = rng.randf_range(0.0, DECISION_INTERVAL)
 	punch_timer = rng.randf_range(0.0, PUNCH_COOLDOWN)
@@ -175,6 +183,12 @@ func apply_type() -> void:
 	accuracy = clampf(0.28 + 0.42 * aim, 0.26, 0.97)
 	windup_mult = clampf(1.25 - 0.25 * reflex, 0.5, 1.45)
 	react_mult = clampf(1.27 - 0.27 * reflex, 0.45, 1.5)
+	# ...and then the class, which is a plain multiplier on top, so an Even type (every
+	# factor 1.0) reproduces each class's base numbers exactly.
+	if unit_class == null:
+		unit_class = UnitClass.of(UnitClass.DEFAULT_ID)
+	move_speed *= unit_class.speed_mult
+	melee_mult = unit_class.melee_mult
 	hp = max_hp
 	if type_name == "":
 		type_name = robot_type.label()
@@ -210,6 +224,19 @@ func _build_body() -> void:
 	arm_r = _part("arm_r", _capsule(0.1, 0.62), _capsule_shape(0.12, 0.66), Vector3(0.42, 1.2, 0), dark)
 	leg_l = _leg("leg_l", -0.17, dark)
 	leg_r = _leg("leg_r", 0.17, dark)
+
+	if unit_class != null and unit_class.shield:
+		# a slab strapped to the left forearm; it swings with the arm and is pure decoration
+		# to the physics - blocking is decided in try_block(), not by a collision shape
+		shield_mesh = MeshInstance3D.new()
+		shield_mesh.mesh = _box(Vector3(0.52, 0.92, 0.09))
+		var smat := StandardMaterial3D.new()
+		smat.albedo_color = team_color.lerp(Color(0.75, 0.76, 0.8), 0.55)
+		smat.metallic = 0.5
+		smat.roughness = 0.45
+		shield_mesh.material_override = smat
+		shield_mesh.position = Vector3(-0.06, 0.02, -0.26)
+		arm_l.add_child(shield_mesh)
 
 	# eye so you can see which way it faces
 	var eye := MeshInstance3D.new()
@@ -366,7 +393,10 @@ func _update_label() -> void:
 		return
 	var f := clampf(hp / max_hp, 0.0, 1.0)
 	if alive:
-		label.text = "%s %s" % [robot_name, personality.label()]
+		var what := personality.label()
+		if unit_class != null and unit_class.id != UnitClass.DEFAULT_ID:
+			what = "%s %s" % [unit_class.label, what]
+		label.text = "%s %s" % [robot_name, what]
 		label.modulate = Color.WHITE
 	else:
 		label.text = robot_name + " X"
@@ -548,6 +578,8 @@ func _physics_process(delta: float) -> void:
 ## Slingers don't box and cowards don't close in - unless there's no other choice
 ## (no rock in hand, none to fetch, enemy right on top of them).
 func _will_box(edist: float) -> bool:
+	if unit_class != null and not unit_class.throws:
+		return true  # no rocks in this one's future: rock_love has nothing to buy
 	var rock_love := personality.get_trait("rock_love")
 	var caution := personality.get_trait("caution")
 	if rock_love < 0.75 and caution < 0.8:
@@ -792,6 +824,8 @@ func _mate_in_trouble() -> Dictionary:
 
 
 func _nearest_free_rock() -> Rock:
+	if unit_class != null and not unit_class.carries:
+		return null  # this one does not pick rocks up, so there is no such thing as a free one
 	var best: Rock = null
 	var bd := INF
 	for rk: Rock in manager.rocks:
@@ -1178,7 +1212,7 @@ func _keep_in_arena(dir: Vector3) -> Vector3:
 # ---------------------------------------------------------------- actions
 
 func _pickup(rock: Rock) -> void:
-	if held_rock != null or not rock.is_free(self):
+	if held_rock != null or unit_class == null or not unit_class.carries or not rock.is_free(self):
 		return
 	held_rock = rock
 	rock.hold(self)
@@ -1187,7 +1221,7 @@ func _pickup(rock: Rock) -> void:
 
 
 func _throw_at(target: Robot) -> void:
-	if held_rock == null:
+	if held_rock == null or unit_class == null or not unit_class.throws:
 		return
 	var origin := to_global(HAND_POS)
 	var speed := held_rock.throw_speed()
@@ -1267,7 +1301,7 @@ func _stomp_or_kick_land() -> void:
 	if t != null and is_instance_valid(t) and t.alive and t.down_timer > 0.0:
 		if _flat_dist(t.corpse_position()) <= KICK_REACH + 0.3 and rng.randf() < 0.55 + 0.45 * accuracy:
 			landed = true
-			t.take_damage(MAX_HP * STOMP_FRAC * dmg_mult, "kick", self, 1)
+			t.take_damage(MAX_HP * STOMP_FRAC * dmg_mult * melee_mult, "kick", self, 1)
 			t.down_timer += STOMP_EXTRA_DOWN
 			if t.ragdoll != null and is_instance_valid(t.ragdoll):
 				var away: Vector3 = t.corpse_position() - global_position
@@ -1284,7 +1318,7 @@ func _stomp_or_kick_land() -> void:
 				continue  # swung a leg at air
 			landed = true
 			var quality := minf(float(hits[r]), float(PUNCH_FULL_HITBOXES)) / float(PUNCH_FULL_HITBOXES)
-			r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality * dmg_mult, "kick", self, hits[r])
+			r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality * dmg_mult * melee_mult, "kick", self, hits[r])
 			var floored := rng.randf() < KICK_KNOCKDOWN_CHANCE * quality
 			var victim: Robot = r
 			var away: Vector3 = victim.global_position - global_position
@@ -1306,7 +1340,7 @@ func _punch_land() -> void:
 			continue  # swung and missed
 		landed = true
 		var quality := minf(float(hits[r]), float(PUNCH_FULL_HITBOXES)) / float(PUNCH_FULL_HITBOXES)
-		r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality * dmg_mult, "punch", self, hits[r])
+		r.take_damage(MAX_HP * PUNCH_MAX_FRAC * quality * dmg_mult * melee_mult, "punch", self, hits[r])
 		# every landed punch sends them sprawling; the roll decides whether it's a flop or a proper floor
 		var floored := rng.randf() < PUNCH_KNOCKDOWN_CHANCE * quality
 		var victim: Robot = r
@@ -1343,6 +1377,34 @@ func notice_punch(attacker: Robot) -> void:
 	action = "dodge"
 	has_face_point = true
 	face_point = attacker.global_position
+
+
+## A rock arriving inside the shield's arc. The shield is on the arm, so it only covers what
+## the robot is looking at: within +-60 degrees of the facing, and only while on its feet.
+## A block is total - no damage, no knockdown - and the rock drops dead at the feet.
+func try_block(rock: Rock) -> bool:
+	if not alive or unit_class == null or not unit_class.shield or down_timer > 0.0:
+		return false
+	var forward := -global_transform.basis.z
+	forward.y = 0.0
+	if forward.length_squared() < 0.001:
+		return false
+	# where it came from: the reverse of its flight, falling back to where it is now
+	var from := -rock.linear_velocity
+	from.y = 0.0
+	if from.length_squared() < 0.01:
+		from = rock.global_position - global_position
+		from.y = 0.0
+	if from.length_squared() < 0.001:
+		return false
+	if forward.normalized().dot(from.normalized()) < cos(deg_to_rad(UnitClass.BLOCK_ARC_DEG)):
+		return false
+	if rng.randf() >= UnitClass.block_chance(robot_type.skill("reflex")):
+		return false
+	blocked.emit(self, rock.thrower)
+	# a shove of the arm to show it happened
+	arm_l.rotation.x = -0.9
+	return true
 
 
 func take_damage(amount: float, source: String, attacker: Robot, hitbox_count: int) -> void:

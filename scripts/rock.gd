@@ -188,6 +188,13 @@ func _on_impact_area(area: Area3D) -> void:
 	var robot: Robot = area.get_meta("robot")
 	if robot == null or robot == thrower or not robot.alive:
 		return  # friendly fire is on: a rock does not care whose it is
+	if robot.try_block(self):
+		# caught on the shield: no damage, no knockdown, and the rock drops dead at his feet
+		linear_velocity = Vector3.ZERO
+		angular_velocity = Vector3.ZERO
+		gravity_scale = 1.0
+		_spend()
+		return
 	# Count every hitbox of this robot within the rock's splash radius; more parts struck = more damage.
 	var count := 0
 	for hb in robot.hitboxes:

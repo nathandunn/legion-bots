@@ -110,6 +110,12 @@ func factor(p: String) -> float:
 	return pow(v / EVEN, CURVE)
 
 
+## The same property as a plain 0..1 skill, for the places that want a probability rather
+## than a multiplier: nothing at 0, half at an even 0.2 share, all of it at 0.4 and up.
+func skill(p: String) -> float:
+	return clampf(get_prop(p) / (EVEN * 2.0), 0.0, 1.0)
+
+
 func copy() -> RobotType:
 	return RobotType.new(props)
 
