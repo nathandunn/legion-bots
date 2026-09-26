@@ -7,9 +7,11 @@ extends RefCounted
 ## action the class forbids rather than scoring it and refusing later.
 ##
 ## Cost is the army builder's currency. The costs below were fitted in M3 by simulation -
-## `tools/calibrate.py` round-robins single-class armies at equal gold, fits a Bradley-Terry
-## strength per class and moves the prices until every class wins about half its battles
-## against the field. See tools/calibration_report.md.
+## `tools/calibrate.py` round-robins single-class armies at equal gold and moves the prices
+## until every class wins about half its battles against the field. The three classes form a
+## cycle (Slinger > Brawler > Shield > Slinger), which Bradley-Terry cannot fit - it
+## oscillated instead - so the fit is a logit-linear curve per pairing. See
+## tools/calibration_report.md.
 ##
 ## SPANS is the other half of that calibration: how much each of the five type properties is
 ## worth *to this class*. A property's factor is 1.0 at an even 0.2 share whatever the gains
