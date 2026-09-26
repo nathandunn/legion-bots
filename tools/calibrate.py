@@ -388,9 +388,16 @@ def span_probe(cid, spans, costs, games, seed):
     return out
 
 
+def span_score(mean, spread):
+    """How good a span row is: the mean matters most (a property should be worth half a battle),
+    the spread second (they should all be worth the same half)."""
+    return abs(mean - 0.5) + 0.5 * spread
+
+
 def tune_spans(classes, costs, spans, games, rounds, seed, step, write, history):
     for cid in classes:
         print("  spans for %s" % LABEL[cid], flush=True)
+        best = None
         for r in range(rounds):
             print("    round %d - curve %.2f, %s" % (
                 r + 1, spans[cid]["curve"],
@@ -402,6 +409,9 @@ def tune_spans(classes, costs, spans, games, rounds, seed, step, write, history)
             history.append({"class": cid, "spans": dict(spans[cid]), "probe": res,
                             "mean": mean, "spread": spread})
             save_state("spans", {"final": spans, "history": history})
+            sc = span_score(mean, spread)
+            if best is None or sc < best[0]:
+                best = (sc, dict(spans[cid]), res, r + 1)
             if r == rounds - 1:
                 break
             # Trust regions. A property 50 points off asks for a 2.7x move under the raw rule,
@@ -419,6 +429,17 @@ def tune_spans(classes, costs, spans, games, rounds, seed, step, write, history)
                 row[p] = min(4.0, max(0.20, row[p] / gm))
             spans[cid] = row
             print("      -> curve %.2f, %s" % (row["curve"], ", ".join("%s %.2f" % (p, row[p]) for p in PROPS)), flush=True)
+        # Keep the best round, not the last. With sigma near 8 points the tuner will happily
+        # walk away from a good table chasing noise, and it did: the Brawler's third round
+        # (mean 47 %, spread 15) was better than its fifth.
+        if best is not None:
+            spans[cid] = best[1]
+            print("    keeping round %d - curve %.2f, %s  (mean %.1f%%)" % (
+                best[3], best[1]["curve"], ", ".join("%s %.2f" % (p, best[1][p]) for p in PROPS),
+                sum(best[2][p][0] for p in PROPS) / len(PROPS) * 100), flush=True)
+            history.append({"class": cid, "spans": dict(best[1]), "probe": best[2],
+                            "kept_round": best[3]})
+            save_state("spans", {"final": spans, "history": history})
         if write:
             write_spans(spans)
     return spans

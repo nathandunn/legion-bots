@@ -65,9 +65,9 @@ const DEFAULT_ID := "mixed"
 ## Fitted in M3 by tools/calibrate.py: specialist (0.6 in one property, 0.1 in the rest)
 ## against Even, same class both sides, gains nudged until every property wins about half.
 const SPANS := {
-	"brawler": {"curve": 0.80, "brawn": 1.00, "speed": 1.00, "grit": 1.00, "reflex": 1.00, "aim": 1.00},
-	"slinger": {"curve": 0.80, "brawn": 1.00, "speed": 1.00, "grit": 1.00, "reflex": 1.00, "aim": 1.00},
-	"shield":  {"curve": 0.80, "brawn": 1.00, "speed": 1.00, "grit": 1.00, "reflex": 1.00, "aim": 1.00},
+	"brawler":   {"curve": 0.52, "brawn": 0.56, "speed": 1.61, "grit": 0.83, "reflex": 0.59, "aim": 2.28},
+	"slinger":   {"curve": 0.47, "brawn": 0.87, "speed": 0.71, "grit": 0.69, "reflex": 1.12, "aim": 2.09},
+	"shield":    {"curve": 0.51, "brawn": 0.60, "speed": 2.34, "grit": 0.82, "reflex": 0.57, "aim": 1.50},
 	"mixed":   {"curve": 0.80, "brawn": 1.00, "speed": 1.00, "grit": 1.00, "reflex": 1.00, "aim": 1.00},
 }
 
