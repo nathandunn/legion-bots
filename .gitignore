@@ -6,3 +6,4 @@ build/
 dist/*.import
 # tools/calibrate.py scratch state
 tools/.calibrate_state.json
+tools/__pycache__/

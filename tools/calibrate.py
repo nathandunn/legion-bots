@@ -513,8 +513,10 @@ def main():
     if a.mode in ("spans", "all"):
         print("\n== type spans, per class ==", flush=True)
         hist = []
+        # a span probe is a mirror match, so it carries no matchup signal at all - only noise -
+        # and 24 is the fewest battles that gets the sigma under about 10 points.
         spans = tune_spans([c for c in a.classes.split(",") if c in CLASSES],
-                           costs, spans, max(a.games // 1, 24), a.rounds, a.seed + 50, a.step, a.write, hist)
+                           costs, spans, max(a.games, 24), a.rounds, a.seed + 50, a.step, a.write, hist)
         save_state("spans", {"final": spans, "history": hist})
 
     if a.mode in ("swap", "all"):
