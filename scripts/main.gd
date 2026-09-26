@@ -9,6 +9,7 @@ var manager: MatchManager
 var arena: Arena
 var cam: CameraRig
 var hud: Hud
+var placement: Placement
 var headless := false
 var batch_left := 0
 var batch_results: Array[Dictionary] = []
@@ -16,6 +17,7 @@ var _restart_timer := -1.0
 var _base_seed := -1
 var _last_result: Dictionary = {}
 var _results_shown_for := -1
+var _result_waiting := -1   # a match that ended while the army builder was open
 
 
 func _ready() -> void:
@@ -42,11 +44,15 @@ func _ready() -> void:
 		if qs.is_valid_int():
 			MatchManager.TEAM_SIZE = clampi(int(qs), 1, MatchManager.MAX_SIZE)
 	if args.has("red"):
-		manager.team_personalities[0] = Personality.preset(args["red"])
-		manager.team_preset_names[0] = args["red"]
+		_apply_army_arg(0, String(args["red"]))
 	if args.has("blue"):
-		manager.team_personalities[1] = Personality.preset(args["blue"])
-		manager.team_preset_names[1] = args["blue"]
+		_apply_army_arg(1, String(args["blue"]))
+	if args.has("sandbox"):
+		manager.sandbox = true
+	if args.has("classcheck"):
+		_class_check()
+		get_tree().quit()
+		return
 	if args.has("type"):
 		for t in 2:
 			manager.team_types[t] = RobotType.preset(args["type"])
@@ -64,7 +70,7 @@ func _ready() -> void:
 		manager.time_limit = float(args.get("cap", "300"))  # sims can't wait forever; real matches do
 		set_sim_speed(20.0)
 		batch_left = maxi(int(args.get("sim", "5")), 1)
-		print("Rock Bots headless sim: %d matches, %s vs %s" % [batch_left, manager.team_preset_names[0], manager.team_preset_names[1]])
+		print("Legion Bots headless sim: %d matches, Red %s vs Blue %s" % [batch_left, _army_arg_label(0), _army_arg_label(1)])
 		_start_next()
 		return
 
@@ -74,6 +80,15 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	hud.setup(manager)
+	placement = Placement.new()
+	placement.manager = manager
+	placement.cam = cam
+	add_child(placement)
+	placement.fight_requested.connect(func(): batch_left = 0; batch_results.clear(); _start_next())
+	placement.closed.connect(_on_placement_closed)
+	hud.armies_requested.connect(func():
+		hud.visible = false
+		placement.open_screen())
 	hud.new_match_requested.connect(func(): batch_left = 0; batch_results.clear(); _start_next())
 	hud.batch_requested.connect(_run_batch)
 	hud.speed_changed.connect(set_sim_speed)
@@ -133,6 +148,69 @@ func _parse_args(list: PackedStringArray) -> Dictionary:
 				if kv2[0] != "":
 					d[kv2[0]] = kv2[1].uri_decode() if kv2.size() > 1 else "1"
 	return d
+
+
+## --red= / --blue= take three shapes:
+##   "Shield Wall"                                   one of the preset armies
+##   "brawler:10:Bruiser:Brawler,slinger:6:Sniper:Slinger"   squads, class:count:type:personality
+##   "Slinger"                                       legacy: TEAM_SIZE do-everything robots
+func _apply_army_arg(t: int, spec: String) -> void:
+	var text := spec.strip_edges()
+	if text == "":
+		return
+	if text.contains(":"):
+		var entries: Array = []
+		for part in text.split(",", false):
+			var f: PackedStringArray = String(part).strip_edges().split(":")
+			if f.size() < 2 or not UnitClass.is_known(f[0]):
+				push_warning("ignoring army entry '%s'" % part)
+				continue
+			entries.append({"class": f[0].strip_edges().to_lower(), "count": maxi(int(f[1]), 0),
+				"type": String(f[2]).strip_edges() if f.size() > 2 else "Even",
+				"persona": String(f[3]).strip_edges() if f.size() > 3 else "Balanced"})
+		if not entries.is_empty():
+			manager.set_army_from_entries(t, entries)
+			return
+	if manager.apply_preset_army(t, text):
+		return
+	# legacy: a bare personality name for the whole side, do-everything robots, quick-battle size
+	manager.team_personalities[t] = CustomSlots.resolve_persona(text)
+	manager.team_preset_names[t] = text
+
+
+func _army_arg_label(t: int) -> String:
+	if manager.armies[t].is_empty():
+		return "%s (quick battle)" % manager.team_preset_names[t]
+	return manager.army_label(t)
+
+
+## --classcheck: prove that an Even type reproduces each class's base numbers exactly. It is
+## the one invariant the class table must never break, and it is cheaper to assert than to
+## re-derive by hand every time the costs move.
+func _class_check() -> void:
+	var even := RobotType.preset("Even")
+	print("class check (Even type, no jitter): base HP %d, speed %.2f, punch %.1f" % [
+		int(Robot.MAX_HP), Robot.SPEED, Robot.MAX_HP * Robot.PUNCH_MAX_FRAC])
+	var bad := 0
+	for cid in UnitClass.TABLE:
+		var uc := UnitClass.of(cid)
+		var r := Robot.new()
+		r.robot_type = even
+		r.unit_class = uc
+		r.personality = Personality.preset("Balanced")
+		r.apply_type()
+		var want_speed := Robot.SPEED * uc.speed_mult
+		var want_punch := Robot.MAX_HP * Robot.PUNCH_MAX_FRAC * uc.melee_mult
+		var got_punch := Robot.MAX_HP * Robot.PUNCH_MAX_FRAC * r.dmg_mult * r.melee_mult
+		var ok := is_equal_approx(r.max_hp, Robot.MAX_HP) and is_equal_approx(r.move_speed, want_speed) \
+			and is_equal_approx(got_punch, want_punch) and is_equal_approx(r.accuracy, Robot.ACCURACY)
+		if not ok:
+			bad += 1
+		print("  %-8s cost %2dg  hp %6.2f  speed %5.3f  punch %6.2f  acc %.3f  throws=%s carries=%s shield=%s  %s" % [
+			uc.label, uc.cost, r.max_hp, r.move_speed, got_punch, r.accuracy,
+			uc.throws, uc.carries, uc.shield, "OK" if ok else "MISMATCH"])
+		r.free()
+	print("class check: %s" % ("all classes reproduce their base numbers" if bad == 0 else "%d MISMATCHES" % bad))
 
 
 func _start_next() -> void:
@@ -216,8 +294,20 @@ func _on_match_ended(result: Dictionary) -> void:
 	_restart_timer = -1.0
 
 
+func _on_placement_closed() -> void:
+	if hud != null:
+		hud.visible = true
+	if _result_waiting >= 0:
+		var idx := _result_waiting
+		_result_waiting = -1
+		_on_celebration_finished(idx)
+
+
 func _on_celebration_finished(idx: int) -> void:
 	if hud == null or _last_result.is_empty() or manager.running or idx != manager.match_index or _results_shown_for == idx:
+		return
+	if placement != null and placement.is_open:
+		_result_waiting = idx   # the builder is open: the panel waits until it closes
 		return
 	if batch_left > 0:
 		return
@@ -235,8 +325,12 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 	var punches := [0, 0]
 	var punch_hits := [0, 0]
 	var kds := [0, 0]
+	var blocks := [0, 0]
 	var ff := [0.0, 0.0]
 	var hist := {}
+	# what the armies cost and what the gold bought, by class, across the whole batch
+	var cost_left := [0, 0]
+	var ledgers := [{}, {}]
 	for r in results:
 		if r["winner"] >= 0:
 			wins[r["winner"]] += 1
@@ -253,11 +347,19 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 			punches[t] += s["punches"][t]
 			punch_hits[t] += s["punch_hits"][t]
 			kds[t] += s["knockdowns"][t]
+			blocks[t] += int(s.get("blocks", [0, 0])[t])
 			ff[t] += s["friendly_fire"][t]
+			cost_left[t] += int(r.get("gold_left", [0, 0])[t])
+			var led: Dictionary = (r.get("classes", [{}, {}]) as Array)[t]
+			for cid in led:
+				if not ledgers[t].has(cid):
+					ledgers[t][cid] = {"kills": 0, "gold": 0}
+				ledgers[t][cid]["kills"] += int(led[cid]["kills"])
+				ledgers[t][cid]["gold"] += int(led[cid]["gold"])
 		for k in s["hitbox_hist"]:
 			hist[k] = int(hist.get(k, 0)) + int(s["hitbox_hist"][k])
 	var n := maxi(results.size(), 1)
-	var names := manager.team_preset_names
+	var names := [_army_arg_label(0), _army_arg_label(1)]
 	var txt := "Batch of %d: %s(%s) %d wins, %s(%s) %d wins, %d draws, avg %ds.  " % [
 		results.size(), MatchManager.TEAM_NAMES[0], names[0], wins[0], MatchManager.TEAM_NAMES[1], names[1], wins[1], draws, int(dur / n)]
 	for t in 2:
@@ -265,6 +367,19 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 		var pacc := float(punch_hits[t]) / maxf(punches[t], 1) * 100.0
 		txt += "%s per match: rock %d / punch %d / kick %d dmg, throw acc %d%%, punch acc %d%%, %d knockdowns, %d friendly-fire dmg.  " % [
 			MatchManager.TEAM_NAMES[t], int(dmg[t]["rock"] / n), int(dmg[t]["punch"] / n), int(dmg[t]["kick"] / n), int(acc), int(pacc), kds[t] / n, int(ff[t] / n)]
+	# the number M3 calibrates the costs against: kills bought per gold piece, by class
+	var kpg := [{}, {}]
+	for t in 2:
+		cost_left[t] = int(round(float(cost_left[t]) / float(n)))
+		for cid in ledgers[t]:
+			var gold: int = int(ledgers[t][cid]["gold"])
+			kpg[t][cid] = (float(ledgers[t][cid]["kills"]) / float(gold)) if gold > 0 else 0.0
+	for t in 2:
+		var parts := PackedStringArray()
+		for cid in kpg[t]:
+			parts.append("%s %.4f" % [cid, kpg[t][cid]])
+		txt += "%s gold left unspent %d; kills per gold: %s.  " % [
+			MatchManager.TEAM_NAMES[t], cost_left[t], ", ".join(parts) if parts.size() > 0 else "-"]
 	var hk := hist.keys()
 	hk.sort()
 	var hparts := PackedStringArray()
@@ -275,7 +390,9 @@ func _summarize(results: Array[Dictionary]) -> Dictionary:
 		"text": txt,
 		"data": {"matches": results.size(), "wins": wins, "draws": draws, "avg_duration": dur / n,
 			"damage": dmg, "throws": throws, "rock_hits": rock_hits, "punches": punches, "punch_hits": punch_hits,
-			"hitbox_hist": hist, "knockdowns": kds, "friendly_fire": ff, "presets": names},
+			"hitbox_hist": hist, "knockdowns": kds, "blocks": blocks, "friendly_fire": ff, "presets": names,
+			"armies": [_army_arg_label(0), _army_arg_label(1)],
+			"cost_left": cost_left, "kills_per_gold": kpg},
 	}
 
 
