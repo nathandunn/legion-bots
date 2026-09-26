@@ -20,19 +20,19 @@ extends RefCounted
 
 const TABLE := {
 	"brawler": {
-		"label": "Brawler", "cost": 20,
+		"label": "Brawler", "cost": 35,
 		"throws": false, "carries": false, "shield": false,
 		"melee_mult": 1.0, "speed_mult": 1.0,
 		"blurb": "Fists and boots only. Walks straight past the rocks.",
 	},
 	"slinger": {
-		"label": "Slinger", "cost": 30,
+		"label": "Slinger", "cost": 25,
 		"throws": true, "carries": true, "shield": false,
 		"melee_mult": 0.6, "speed_mult": 1.0,
 		"blurb": "Throws rocks. Soft hands up close - 0.6x on fists and boots.",
 	},
 	"shield": {
-		"label": "Shield", "cost": 50,
+		"label": "Shield", "cost": 34,
 		"throws": false, "carries": false, "shield": true,
 		"melee_mult": 1.2, "speed_mult": 0.85,
 		"blurb": "Blocks rocks from the front, punches 1.2x, moves 0.85x. Never throws.",

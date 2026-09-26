@@ -21,11 +21,13 @@ const GRID_H := 12
 const FRONT_ORDER := {"shield": 0, "brawler": 1, "mixed": 1, "slinger": 2}
 ## Three armies that fit inside 500 gold and 20 units, for the preset buttons, the
 ## "fill enemy" button and the headless --red=/--blue= arguments.
+## Re-costed in M3: the counts were chosen against the placeholder prices and all three blew
+## the budget once the Brawler went to 35 g. Each is back inside 500 gold and 20 units.
 const PRESET_ARMIES := {
-	"Brawler Mob": [{"class": "brawler", "count": 20, "type": "Bruiser", "persona": "Brawler"}],
-	"Slinger Line": [{"class": "shield", "count": 5, "type": "Tank", "persona": "Guardian"},
-		{"class": "slinger", "count": 8, "type": "Sniper", "persona": "Slinger"}],
-	"Shield Wall": [{"class": "shield", "count": 7, "type": "Tank", "persona": "Guardian"},
+	"Brawler Mob": [{"class": "brawler", "count": 14, "type": "Bruiser", "persona": "Brawler"}],
+	"Slinger Line": [{"class": "shield", "count": 4, "type": "Tank", "persona": "Guardian"},
+		{"class": "slinger", "count": 14, "type": "Sniper", "persona": "Slinger"}],
+	"Shield Wall": [{"class": "shield", "count": 11, "type": "Tank", "persona": "Guardian"},
 		{"class": "slinger", "count": 5, "type": "Sniper", "persona": "Slinger"}],
 }
 const MATCH_TIME := 150.0   # only the headless sims are capped (time_limit); a real match runs until a team is gone
