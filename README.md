@@ -1,15 +1,52 @@
-# Legion Bots — TABS-style armies on the Rock Bots personality model (v0: Rock Bots at up to 50 a side)
+# Legion Bots — TABS-style armies on the Rock Bots personality model
 
-5-a-side AI robot brawl in Godot 4 (3D). Robots throw rocks and punch. Pure spectator sim —
-you set each team's personality, watch, or batch-run matches for statistics.
+AI robot battle in Godot 4 (3D). You get **500 gold and 20 units a side**: buy Brawlers,
+Slingers and Shields, place them on your half of a 2 m grid, give each squad a type and a
+personality, and press Fight. Nobody takes orders — what a unit does comes out of its class,
+its type and its personality, through the same utility brain Rock Bots always had.
 
 Part of the Precog sim suite (sibling of Battle Bots / Pack Hunt / War Sim).
+
+## M2 in one screen
+
+- **Armies** (button in the top row) opens the builder: camera overhead, your half lit up,
+  class buttons with their costs along the bottom, gold and unit count live.
+- Tap your half to drop a unit, drag to paint a line of them, tap one to take it away.
+  Undo / Clear. Over 500 gold or over 20 units is refused and says so.
+- Three preset armies, "Fill enemy from preset", a Red/Blue toggle, five saved-army slots
+  kept in the browser, and a Sandbox switch that lifts the gold limit (never the 20 cap).
+- **Quick battle**: with nothing placed, both sides spawn `?size=N` do-everything robots —
+  the v0 game — so the first load still starts a battle on its own.
+
+## Unit classes
+
+A class is a hard fence on what a unit *can* do; the personality then decides freely inside
+it. The brain never scores an action the class forbids, so a Brawler with a high `rock_love`
+simply walks past the rocks rather than fetching one it could never throw.
+
+| class | cost | fists / boots | rocks | notes |
+|---|---|---|---|---|
+| **Brawler** | 20 g | full damage | never picks one up | the cheap body |
+| **Slinger** | 30 g | 0.6× damage | throws | soft hands up close |
+| **Shield** | 50 g | 1.2× damage | never throws | a shield on the left arm: a rock arriving within ±60° of its facing is blocked with chance `0.5 + 0.4 × reflex skill` (0.7 for an Even type). A block is total — no damage, no knockdown, the rock drops dead. Moves at 0.85× |
+| *Mixed* | 30 g | full | throws | the v0 robot. Internal only: quick battles and legacy `--red=Brawler` |
+
+**The costs are placeholders.** They live in one table (`scripts/unit_class.gd`) and M3
+calibrates them; the headless summary prints `kills_per_gold` by class, which is the number
+to calibrate against. As it stands the Brawler is far and away the best buy (see the last
+section).
+
+An Even type (0.2 in all five properties) reproduces each class's base numbers exactly:
+
+```
+godot --headless --path . -- --classcheck
+```
 
 ## Rules (as specced)
 
 | thing | value |
 |---|---|
-| teams | 5 v 5, last team standing, **no clock** — stop it yourself if you tire of it (headless sims are capped at `--cap=300` s) |
+| teams | up to **20 a side** (`MatchManager.MAX_SIZE`), last team standing, **no clock** — stop it yourself if you tire of it (headless sims are capped at `--cap=300` s) |
 | robot speed | 6 m/s (±8 % by aggression); backpedalling (moving away from what you face) is 22 % slower, so chasers catch fleers |
 | rock speed | 18 m/s (3× robot), ~20 m range, lofted flight |
 | rocks | 5 on the field (1 per 2 robots), scattered, reusable — thrown rocks land and can be picked up again. Three sizes (1.2 / 2 / 3.2 kg); heavier ones leave the hand slower but carry more momentum |
@@ -63,22 +100,64 @@ the cooldown is up.
 - Drag to orbit, wheel / pinch to zoom. The camera stays where you put it (it glides in on the winners
   during the celebration and back out afterwards).
 - `Pause` / `Play`, then `1x 2x 4x 8x` — sim speed (raises the physics tick rate to match, so fast mode is not sloppier).
-- `Teams / setup` — preset + sliders per team, then `Start match with these teams`.
+- `Armies` — the builder (above). `Fight!` from there; afterwards the results panel offers
+  *Same armies again* and *Edit armies*.
+- `Teams / setup` — preset + sliders per team for the quick battle, then `Start match with these teams`.
 - `Live list` — per-robot HP / current action. `Last results` reopens the last match's results.
 - `New match`, `Batch x10` — batch runs at 8× and prints win rates, damage by source, throw/punch accuracy,
   knockdowns and a histogram of hitboxes-struck-per-rock-hit.
-- Nothing starts by itself: the results panel asks *Start the next match?* — same teams, change teams
-  first, or not yet. Default teams: Slinger vs Brawler.
+- Nothing starts by itself: the results panel asks *Start the next match?* — same armies again, edit
+  armies, change teams first, or not yet. With nothing placed it is the quick battle: Slinger vs Brawler.
 - At the end of a match a results panel shows team totals (throws/hits %, punches/hits %, damage by
   source, knockdowns, kills — a team's kills equal the enemies it killed; a robot's kills are the ones
   its own hands or rocks finished, own goals listed separately) and a per-robot table.
   The UI scales with device pixel density and wraps for phones.
+
+## The army builder
+
+An army is a list of **squads**. A squad is one class, one type, one personality and the
+cells its units stand on — never an order. Adding a class either starts its squad or selects
+the one that is already there, so a side is at most one squad per class.
+
+The grid is 2 m cells over the middle band of the floor, 18 across by 12 deep; Red owns the
+low-x half, Blue the high-x half, and a cell with a cover block in it cannot be built on.
+Preset armies, all inside 500 gold and 20 units:
+
+| preset | units | gold |
+|---|---|---|
+| Brawler Mob | 20 Brawler (Bruiser / Brawler) | 400 |
+| Slinger Line | 5 Shield + 8 Slinger, shields in front | 490 |
+| Shield Wall | 7 Shield + 5 Slinger | 500 |
+
+Saved armies are the third kind of slot in `scripts/custom_slots.gd`, beside the five
+personality and five type slots, in the same `user://custom_slots.json`. Every field is
+re-validated on the way in, so an old or hand-mangled save costs that slot and never the
+game. Loading an army onto the other half mirrors it.
+
+The army model has a self-test that needs no browser:
+
+```
+godot --headless --path . --script scripts/army_selftest.gd
+```
 
 ## Headless simulation
 
 ```
 godot --headless --path . -- --sim=20 --red=Slinger --blue=Brawler --seed=1
 ```
+
+`--red=` and `--blue=` take three shapes:
+
+| argument | means |
+|---|---|
+| `--red="Shield Wall"` | one of the three preset armies |
+| `--red=brawler:10:Bruiser:Brawler,slinger:6:Sniper:Slinger` | squads: `class:count:type:personality` |
+| `--red=Slinger` | legacy: a personality for the whole side, `TEAM_SIZE` Mixed robots |
+
+Headless armies are laid out on their own half automatically (shields in front, then fists,
+then the rock throwers). `--sandbox` lifts the gold limit. The SUMMARY json carries
+`cost_left` and `kills_per_gold` by class per side alongside the old numbers, and the
+results panel gains a Class column and gold spent / gold left standing per team.
 
 Prints one line per match, a summary line, then a JSON blob (wins, avg duration, damage by source,
 throws / hits, punches / hits, hitbox histogram). Runs at 20× game speed.
@@ -90,7 +169,7 @@ Legs swing from the hip in time with the ground covered (no more sliding statues
 
 ## Build / deploy
 
-- Godot **4.4.1**, GL Compatibility renderer, GDScript only, no addons, everything built in code
+- Godot **4.7.2**, GL Compatibility renderer, GDScript only, no addons, everything built in code
   (the only scene file is `scenes/Main.tscn`).
 - Web export preset is in `export_presets.cfg` (thread support **off**, so no COOP/COEP headers needed —
   plain static hosting works):
@@ -114,10 +193,19 @@ scripts/personality.gd    traits + presets
 scripts/arena.gd          floor, walls, cover
 scripts/camera_rig.gd     orbit camera (mouse + touch)
 scripts/hud.gd            scoreboard, speed, team panel, results
+scripts/unit_class.gd     the class table: costs and what each class may do
+scripts/placement.gd      the army builder - overhead field, grid, bottom bar
+scripts/custom_slots.gd   your five personalities, five types and five armies
+scripts/army_selftest.gd  headless self-test for the army model
 ```
 
-## Next ideas
+## Next ideas (M3)
 
+- **Calibrate the costs.** 30 headless battles at the placeholder prices: Brawler Mob beats
+  both shield armies 6–0 in about 24 s, and the two shield armies are 3–3 with each other.
+  Kills per gold: Brawler 0.030–0.059, Slinger 0.006–0.022, Shield 0.000–0.012. The Brawler
+  is underpriced, or the Shield is overpriced, or both.
+- Pinch-zoom and pan on the placement camera: a 2 m cell is ~21 px on a 412-wide phone.
 - Swap `Personality` for the sim-core schema and drive it from agent-forge sweeps.
 - Rock pickup animation, throw arc preview, hit numbers.
 - Team compositions (mixed presets per team), more rocks / bigger arena options in the HUD.
