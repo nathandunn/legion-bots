@@ -216,7 +216,7 @@ func _build_ui() -> void:
 		row_a.add_child(b)
 		_team_btns.append(b)
 	_gold_label = Label.new()
-	_gold_label.custom_minimum_size = Vector2(118, 0)
+	_gold_label.custom_minimum_size = Vector2(126, 0)
 	_gold_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row_a.add_child(_gold_label)
 	_units_label = Label.new()
@@ -557,7 +557,8 @@ func _refresh() -> void:
 	_msg.text = ""   # any message belongs to the action that put it there
 	var cost := manager.army_cost(team)
 	var units := manager.army_units(team)
-	_gold_label.text = "Gold %d / %s" % [cost, "inf" if manager.sandbox else str(MatchManager.GOLD_BUDGET)]
+	_gold_label.text = "Gold left %d" % (MatchManager.GOLD_BUDGET - cost) if not manager.sandbox \
+		else "Gold %d (sandbox)" % cost
 	_gold_label.add_theme_color_override("font_color",
 		Color(0.95, 0.45, 0.4) if (not manager.sandbox and cost > MatchManager.GOLD_BUDGET) else Color(0.95, 0.85, 0.45))
 	_units_label.text = "Units %d / %d" % [units, MatchManager.MAX_SIZE]
