@@ -8,12 +8,38 @@ signal celebration_finished(match_index: int)
 signal dance_started(match_index: int)
 
 const MAX_SIZE := 20   # per side; raise when the ragdoll cap and spatial hash land
-static var TEAM_SIZE := 20   # per side, 1..MAX_SIZE; --size=N or ?size=N
+static var TEAM_SIZE := 20   # the *quick battle* size, per side, 1..MAX_SIZE; --size=N or ?size=N
+## Gold a side in the army builder. A Sandbox toggle lifts it; MAX_SIZE never lifts.
+const GOLD_BUDGET := 500
+## The placement grid: 2 m cells over the whole 40x40 floor, Red the low-x half.
+const CELL := 2.0
+const GRID_W := 18
+## 12 rows, not 18: the band of the field an overhead camera can show whole on a phone AND
+## on a 16:9 laptop. The walls at |z| > 12 are still there, they are just not build space.
+const GRID_H := 12
+## Who stands in front when an army is laid out for you: shields, then fists, then rocks.
+const FRONT_ORDER := {"shield": 0, "brawler": 1, "mixed": 1, "slinger": 2}
+## Three armies that fit inside 500 gold and 20 units, for the preset buttons, the
+## "fill enemy" button and the headless --red=/--blue= arguments.
+const PRESET_ARMIES := {
+	"Brawler Mob": [{"class": "brawler", "count": 20, "type": "Bruiser", "persona": "Brawler"}],
+	"Slinger Line": [{"class": "shield", "count": 5, "type": "Tank", "persona": "Guardian"},
+		{"class": "slinger", "count": 8, "type": "Sniper", "persona": "Slinger"}],
+	"Shield Wall": [{"class": "shield", "count": 7, "type": "Tank", "persona": "Guardian"},
+		{"class": "slinger", "count": 5, "type": "Sniper", "persona": "Slinger"}],
+}
 const MATCH_TIME := 150.0   # only the headless sims are capped (time_limit); a real match runs until a team is gone
 const ARENA_HALF := 20.0
 const ROCKS_PER_ROBOT := 0.5   # ~1 rock per 2 robots
 const TEAM_NAMES := ["Red", "Blue"]
 const TEAM_COLORS := [Color(0.9, 0.3, 0.25), Color(0.25, 0.5, 0.95)]
+
+static func _blank_overrides() -> Array:
+	var a: Array = []
+	for i in MAX_SIZE:
+		a.append("")
+	return a
+
 
 var world: Node3D
 var arena: Arena
@@ -24,8 +50,19 @@ var team_preset_names: Array[String] = ["Slinger", "Brawler"]
 ## meaningful after you have fiddled with one robot.
 var team_types: Array[RobotType] = [RobotType.preset("Even"), RobotType.preset("Even")]
 var team_type_names: Array[String] = ["Even", "Even"]
-var player_persona := [["", "", "", "", ""], ["", "", "", "", ""]]
-var player_type := [["", "", "", "", ""], ["", "", "", "", ""]]
+## Per-robot overrides for the quick battle, one entry per possible robot ("" = follow the
+## team). Full length from the start: the HUD builds its pickers before the first spawn.
+var player_persona := [_blank_overrides(), _blank_overrides()]
+var player_type := [_blank_overrides(), _blank_overrides()]
+## The army each side has been given in the placement screen: a list of squads, each
+## {"class": id, "type": name, "persona": name, "positions": [Vector2 grid cells]}.
+## An empty list means "nothing placed" and the side spawns the quick battle instead.
+var armies: Array = [[], []]
+## Sandbox lifts the gold budget (the 20-unit cap stays).
+var sandbox := false
+## Filled in at spawn: how many actually took the field, and what they cost.
+var team_count := [0, 0]
+var gold_spent := [0, 0]
 var robots: Array[Robot] = []
 var rocks: Array[Rock] = []
 var time_left := INF
@@ -65,10 +102,18 @@ func start_match(seed_value: int = -1) -> void:
 		while player_type[t].size() < TEAM_SIZE:
 			player_type[t].append("")
 
+	# who is taking the field, on both sides, before anyone is built
+	var plans := [_team_plan(0), _team_plan(1)]
+	for t in 2:
+		team_count[t] = plans[t].size()
+		gold_spent[t] = 0
+		for e in plans[t]:
+			gold_spent[t] += UnitClass.cost_of(String(e["class"]))
+
 	# interleave + shuffle spawn order so neither team gets first-strike from tree order
 	var slots := []
 	for t in 2:
-		for i in TEAM_SIZE:
+		for i in plans[t].size():
 			slots.append([t, i])
 	for k in range(slots.size() - 1, 0, -1):
 		var j := rng.randi_range(0, k)
@@ -78,52 +123,50 @@ func start_match(seed_value: int = -1) -> void:
 	for slot in slots:
 		var t: int = slot[0]
 		var i: int = slot[1]
-		if true:
-			var r := Robot.new()
-			r.team = t
-			r.team_color = TEAM_COLORS[t]
-			r.robot_name = "%s%d" % [TEAM_NAMES[t][0], i + 1]
-			# a robot follows its team unless it has been given its own personality or type
-			var pname: String = String(player_persona[t][i])
-			if pname == "":
-				r.personality = team_personalities[t].jittered(rng, 0.08)
-			else:
-				r.personality = CustomSlots.resolve_persona(pname).jittered(rng, 0.05)
-			var tname: String = String(player_type[t][i])
-			if tname == "":
-				r.robot_type = team_types[t].jittered(rng, 0.02)
-				r.type_name = team_type_names[t]
-			else:
-				r.robot_type = CustomSlots.resolve_build(tname).jittered(rng, 0.02)
-				r.type_name = tname
-			r.manager = self
-			r.rng = RandomNumberGenerator.new()
-			r.rng.seed = rng.randi()
-			# small teams stand in the old single line; big ones form ranks, back rank at the wall
-			var per_row: int = mini(TEAM_SIZE, 10)
-			var row: int = i / per_row
-			var col: int = i % per_row
-			var span: float = 8.0 if TEAM_SIZE <= 5 else 17.0
-			var z := lerpf(-span, span, float(col) / float(maxi(per_row - 1, 1)))
-			var depth: float = 15.0 if TEAM_SIZE <= 5 else 17.0 - float(row) * 2.4
-			var x := -depth if t == 0 else depth
-			r.position = Vector3(x + rng.randf_range(-1.5, 1.5), 0.0, z)
-			r.rotation.y = PI * 0.5 if t == 0 else -PI * 0.5
-			r.damaged.connect(_on_damaged)
-			r.died.connect(_on_died)
-			r.threw.connect(_on_threw)
-			r.punched.connect(_on_punched)
-			r.kicked.connect(_on_kicked)
-			r.knocked_down.connect(_on_knocked_down)
-			world.add_child(r)
-			robots.append(r)
-			robot_stats[r.robot_name] = {"name": r.robot_name, "team": t,
-				"preset": (pname if pname != "" else team_preset_names[t]), "type": r.type_name,
-				"dmg_rock": 0.0, "dmg_punch": 0.0, "dmg_kick": 0.0, "dmg_taken": 0.0, "throws": 0, "rock_hits": 0,
-				"punches": 0, "punch_hits": 0, "kicks": 0, "kick_hits": 0, "knockdowns": 0, "kills": 0, "hp": r.hp, "alive": true}
+		var entry: Dictionary = plans[t][i]
+		var r := Robot.new()
+		r.team = t
+		r.team_color = TEAM_COLORS[t]
+		r.robot_name = "%s%d" % [TEAM_NAMES[t][0], i + 1]
+		r.unit_class = UnitClass.of(String(entry["class"]))
+		# a robot follows its team unless it has been given its own personality or type
+		var pname: String = String(entry["persona"])
+		if pname == "":
+			r.personality = team_personalities[t].jittered(rng, 0.08)
+		else:
+			r.personality = CustomSlots.resolve_persona(pname).jittered(rng, 0.05)
+		var tname: String = String(entry["type"])
+		if tname == "":
+			r.robot_type = team_types[t].jittered(rng, 0.02)
+			r.type_name = team_type_names[t]
+		else:
+			r.robot_type = CustomSlots.resolve_build(tname).jittered(rng, 0.02)
+			r.type_name = tname
+		r.manager = self
+		r.rng = RandomNumberGenerator.new()
+		r.rng.seed = rng.randi()
+		r.position = entry["pos"]
+		# face the other half, whatever the spawn point (forward is -Z, so this is +X / -X)
+		r.rotation.y = -PI * 0.5 if t == 0 else PI * 0.5
+		r.damaged.connect(_on_damaged)
+		r.died.connect(_on_died)
+		r.threw.connect(_on_threw)
+		r.punched.connect(_on_punched)
+		r.kicked.connect(_on_kicked)
+		r.knocked_down.connect(_on_knocked_down)
+		r.blocked.connect(_on_blocked)
+		world.add_child(r)
+		robots.append(r)
+		robot_stats[r.robot_name] = {"name": r.robot_name, "team": t,
+			"preset": (pname if pname != "" else team_preset_names[t]), "type": r.type_name,
+			"class": r.unit_class.label, "class_id": r.unit_class.id, "cost": r.unit_class.cost,
+			"dmg_rock": 0.0, "dmg_punch": 0.0, "dmg_kick": 0.0, "dmg_taken": 0.0, "throws": 0, "rock_hits": 0,
+			"punches": 0, "punch_hits": 0, "kicks": 0, "kick_hits": 0, "knockdowns": 0, "blocks": 0,
+			"kills": 0, "hp": r.hp, "alive": true}
 
-	print("LEGION match %d: %d a side, %d robots on the field" % [match_index, TEAM_SIZE, robots.size()])
-	var n_rocks := int(ceil(TEAM_SIZE * 2 * ROCKS_PER_ROBOT))
+	print("LEGION match %d: Red %s vs Blue %s - %d robots on the field" % [
+		match_index, army_summary(0), army_summary(1), robots.size()])
+	var n_rocks := int(ceil(maxi(team_count[0], team_count[1]) * 2 * ROCKS_PER_ROBOT))
 	var tries := 0
 	while rocks.size() < n_rocks and tries < 200:
 		tries += 1
@@ -143,6 +186,254 @@ func start_match(seed_value: int = -1) -> void:
 	celebration_phase = ""
 	_celebrants.clear()
 	match_started.emit(match_index)
+
+
+# ---------------------------------------------------------------- the army model
+##
+## An army is a list of squads. A squad is one unit class, a type, a personality and the
+## cells its units stand on - never an order. What the units then do comes out of the
+## personality and the class fence, exactly as it does for a quick battle.
+
+## Centre of a grid cell, in metres. Cell (0,0) is the far Red corner.
+static func cell_to_world(cell: Vector2) -> Vector3:
+	return Vector3(-GRID_W * CELL * 0.5 + CELL * (cell.x + 0.5), 0.0,
+		-GRID_H * CELL * 0.5 + CELL * (cell.y + 0.5))
+
+
+static func world_to_cell(p: Vector3) -> Vector2:
+	return Vector2(floorf((p.x + GRID_W * CELL * 0.5) / CELL), floorf((p.z + GRID_H * CELL * 0.5) / CELL))
+
+
+static func cell_in_grid(cell: Vector2) -> bool:
+	return cell.x >= 0.0 and cell.x < GRID_W and cell.y >= 0.0 and cell.y < GRID_H
+
+
+## Which half a cell is in. The grid splits down the middle: Red low x, Blue high x.
+static func cell_team(cell: Vector2) -> int:
+	return 0 if cell.x < GRID_W * 0.5 else 1
+
+
+## A cell a cover block stands in (plus a body's width) is not somewhere you can put a unit.
+static func cell_blocked(cell: Vector2) -> bool:
+	var p := cell_to_world(cell)
+	for c in Arena.COVER:
+		if absf(p.x - float(c[0])) < float(c[2]) * 0.5 + 0.9 and absf(p.z - float(c[1])) < float(c[3]) * 0.5 + 0.9:
+			return true
+	return false
+
+
+func army_units(t: int) -> int:
+	var n := 0
+	for sq in armies[t]:
+		n += (sq["positions"] as Array).size()
+	return n
+
+
+func army_cost(t: int) -> int:
+	var g := 0
+	for sq in armies[t]:
+		g += UnitClass.cost_of(String(sq["class"])) * (sq["positions"] as Array).size()
+	return g
+
+
+func gold_left(t: int) -> int:
+	return GOLD_BUDGET - army_cost(t)
+
+
+## The squad of this class for this team, made if it is not there yet. One squad per class:
+## adding a class either starts its squad or selects the one that exists.
+func ensure_squad(t: int, class_id: String, type_name: String = "Even", persona_name: String = "Balanced") -> Dictionary:
+	var cid := UnitClass.normalize_id(class_id)
+	for sq in armies[t]:
+		if String(sq["class"]) == cid:
+			return sq
+	var made := {"class": cid, "type": type_name, "persona": persona_name, "positions": []}
+	armies[t].append(made)
+	return made
+
+
+func find_squad(t: int, class_id: String) -> Dictionary:
+	var cid := UnitClass.normalize_id(class_id)
+	for sq in armies[t]:
+		if String(sq["class"]) == cid:
+			return sq
+	return {}
+
+
+## Whatever stands on this cell, as {"squad": squad, "index": i}, or an empty dict.
+func unit_at(t: int, cell: Vector2) -> Dictionary:
+	for sq in armies[t]:
+		var ps: Array = sq["positions"]
+		for i in ps.size():
+			if Vector2(ps[i]) == cell:
+				return {"squad": sq, "index": i}
+	return {}
+
+
+## "" if this unit can go down, otherwise the reason it cannot, in plain words.
+func can_add(t: int, class_id: String, cell: Vector2) -> String:
+	if not cell_in_grid(cell):
+		return "Off the field."
+	if cell_team(cell) != t:
+		return "That is the other half."
+	if cell_blocked(cell):
+		return "A block is in the way."
+	if not unit_at(t, cell).is_empty():
+		return ""  # occupied is not an error: the tap removes instead
+	if army_units(t) >= MAX_SIZE:
+		return "%d units is the cap." % MAX_SIZE
+	if not sandbox and army_cost(t) + UnitClass.cost_of(class_id) > GOLD_BUDGET:
+		return "Not enough gold."
+	return ""
+
+
+## Put one unit of `class_id` on `cell`. Returns "" or why it did not happen.
+func add_unit(t: int, class_id: String, cell: Vector2, type_name: String, persona_name: String) -> String:
+	var why := can_add(t, class_id, cell)
+	if why != "":
+		return why
+	if not unit_at(t, cell).is_empty():
+		return "Taken."
+	var sq := ensure_squad(t, class_id, type_name, persona_name)
+	(sq["positions"] as Array).append(cell)
+	return ""
+
+
+func remove_unit(t: int, cell: Vector2) -> bool:
+	var hit := unit_at(t, cell)
+	if hit.is_empty():
+		return false
+	var sq: Dictionary = hit["squad"]
+	(sq["positions"] as Array).remove_at(int(hit["index"]))
+	if (sq["positions"] as Array).is_empty():
+		armies[t].erase(sq)
+	return true
+
+
+func clear_army(t: int) -> void:
+	armies[t] = []
+
+
+## A deep copy, for the undo stack and for the saved-army slots.
+static func copy_army(src: Array) -> Array:
+	var out: Array = []
+	for sq in src:
+		var ps: Array = []
+		for c in sq["positions"]:
+			ps.append(Vector2(c))
+		out.append({"class": String(sq["class"]), "type": String(sq["type"]),
+			"persona": String(sq["persona"]), "positions": ps})
+	return out
+
+
+## Free cells on a side, rank by rank from the middle of the field backwards, five abreast
+## and centred - the shape an army falls into when you ask the game to lay it out for you.
+static func layout_cells(team: int, n: int) -> Array:
+	var rows := [6, 5, 7, 4, 8, 3, 9, 2, 10, 1]
+	var out: Array = []
+	var rank := 0
+	while out.size() < n and rank < 9:
+		var col := (6 - rank) if team == 0 else (11 + rank)
+		if col < 0 or col >= GRID_W:
+			break
+		for r in rows:
+			if out.size() >= n:
+				break
+			var cell := Vector2(col, r)
+			if cell_blocked(cell) or cell_team(cell) != team:
+				continue
+			out.append(cell)
+		rank += 1
+	return out
+
+
+## Build a side from [{"class","count","type","persona"}, ...] and stand it up on its half:
+## shields in front, then fists, then the rock throwers at the back.
+func set_army_from_entries(t: int, entries: Array) -> void:
+	var ordered: Array = entries.duplicate()
+	ordered.sort_custom(func(a, b): return int(FRONT_ORDER.get(String(a["class"]), 1)) < int(FRONT_ORDER.get(String(b["class"]), 1)))
+	var total := 0
+	for e in ordered:
+		total += maxi(int(e.get("count", 0)), 0)
+	total = mini(total, MAX_SIZE)
+	var cells := layout_cells(t, total)
+	var squads: Array = []
+	var k := 0
+	for e in ordered:
+		var cid := UnitClass.normalize_id(String(e.get("class", "brawler")))
+		var want: int = maxi(int(e.get("count", 0)), 0)
+		var ps: Array = []
+		while ps.size() < want and k < cells.size():
+			ps.append(cells[k])
+			k += 1
+		if ps.is_empty():
+			continue
+		squads.append({"class": cid, "type": String(e.get("type", "Even")),
+			"persona": String(e.get("persona", "Balanced")), "positions": ps})
+	armies[t] = squads
+
+
+func apply_preset_army(t: int, army_name: String) -> bool:
+	var key := preset_army_key(army_name)
+	if key == "":
+		return false
+	set_army_from_entries(t, PRESET_ARMIES[key])
+	return true
+
+
+## Loose matching, so "shield wall", "Shield_Wall" and "shieldwall" all find it.
+static func preset_army_key(army_name: String) -> String:
+	var want := army_name.strip_edges().to_lower().replace(" ", "").replace("_", "").replace("-", "")
+	for k in PRESET_ARMIES:
+		if String(k).to_lower().replace(" ", "") == want:
+			return k
+	return ""
+
+
+## "12 units: 7 Shield, 5 Slinger [500g]", or the quick battle line when nothing is placed.
+func army_summary(t: int) -> String:
+	if armies[t].is_empty():
+		return "%d %s (quick battle) [%dg]" % [team_count[t], team_type_names[t] + " " + team_preset_names[t], gold_spent[t]]
+	var bits := PackedStringArray()
+	for sq in armies[t]:
+		bits.append("%d %s" % [(sq["positions"] as Array).size(), UnitClass.label_of(String(sq["class"]))])
+	return "%d units: %s [%dg]" % [army_units(t), ", ".join(bits), army_cost(t)]
+
+
+## Short composition label, for the saved-army slots.
+func army_label(t: int) -> String:
+	var bits := PackedStringArray()
+	for sq in armies[t]:
+		bits.append("%d %s" % [(sq["positions"] as Array).size(), UnitClass.label_of(String(sq["class"]))])
+	return ", ".join(bits) if bits.size() > 0 else "empty"
+
+
+## Who takes the field for this side: one entry per robot, in spawn order.
+func _team_plan(t: int) -> Array:
+	var plan: Array = []
+	if not armies[t].is_empty():
+		for sq in armies[t]:
+			for cell in sq["positions"]:
+				if plan.size() >= MAX_SIZE:
+					break
+				plan.append({"class": String(sq["class"]), "type": String(sq["type"]),
+					"persona": String(sq["persona"]), "pos": cell_to_world(Vector2(cell))})
+		return plan
+	# nothing placed: the quick battle, which is v0 - TEAM_SIZE do-everything robots in ranks,
+	# following the team pickers, with the per-robot overrides still honoured
+	var n := clampi(TEAM_SIZE, 1, MAX_SIZE)
+	for i in n:
+		var per_row: int = mini(n, 10)
+		var row: int = i / per_row
+		var col: int = i % per_row
+		var span: float = 8.0 if n <= 5 else 17.0
+		var z := lerpf(-span, span, float(col) / float(maxi(per_row - 1, 1)))
+		var depth: float = 15.0 if n <= 5 else 17.0 - float(row) * 2.4
+		var x := -depth if t == 0 else depth
+		plan.append({"class": UnitClass.DEFAULT_ID, "type": String(player_type[t][i]),
+			"persona": String(player_persona[t][i]),
+			"pos": Vector3(x + rng.randf_range(-1.5, 1.5), 0.0, z)})
+	return plan
 
 
 func clear() -> void:
@@ -172,6 +463,7 @@ func _fresh_stats() -> Dictionary:
 		"friendly_fire": [0.0, 0.0],
 		"own_goals": [0, 0],
 		"knockdowns": [0, 0],
+		"blocks": [0, 0],    # rocks stopped on a shield
 		"hitbox_hist": {},   # hitboxes struck per rock hit -> count
 	}
 
@@ -193,6 +485,31 @@ func alive_count(team: int) -> int:
 		if r.alive and r.team == team:
 			n += 1
 	return n
+
+
+## What the survivors cost: the gold still standing when the dust settles.
+func gold_standing(team: int) -> int:
+	var g := 0
+	for r in robots:
+		if r.team == team and r.alive and r.unit_class != null:
+			g += r.unit_class.cost
+	return g
+
+
+## Kills and gold by class, for one side: {class_id: {"kills": n, "gold": g, "label": "Shield"}}.
+func class_ledger(team: int) -> Dictionary:
+	var out := {}
+	for key in robot_stats:
+		var rs: Dictionary = robot_stats[key]
+		if int(rs["team"]) != team:
+			continue
+		var cid := String(rs.get("class_id", UnitClass.DEFAULT_ID))
+		if not out.has(cid):
+			out[cid] = {"label": String(rs.get("class", cid)), "kills": 0, "gold": 0, "units": 0}
+		out[cid]["kills"] += int(rs.get("kills", 0))
+		out[cid]["gold"] += int(rs.get("cost", 0))
+		out[cid]["units"] += 1
+	return out
 
 
 ## Types change how big a robot's HP pool is, so "team HP left" needs the team's own total
@@ -259,6 +576,15 @@ func end_match(reason: String) -> void:
 	var result := {
 		"robots": per_robot,
 		"match": match_index,
+		"counts": team_count.duplicate(),
+		"budget": GOLD_BUDGET,
+		"sandbox": sandbox,
+		"gold_spent": gold_spent.duplicate(),
+		"gold_left": [GOLD_BUDGET - gold_spent[0], GOLD_BUDGET - gold_spent[1]],
+		"gold_standing": [gold_standing(0), gold_standing(1)],
+		"from_army": [not armies[0].is_empty(), not armies[1].is_empty()],
+		"army_labels": [army_label(0), army_label(1)],
+		"classes": [class_ledger(0), class_ledger(1)],
 		"winner": winner,
 		"winner_name": TEAM_NAMES[winner] if winner >= 0 else "Draw",
 		"reason": reason,
@@ -397,6 +723,11 @@ func _on_kicked(robot: Robot, landed: bool) -> void:
 	if landed:
 		stats["kick_hits"][robot.team] += 1
 		robot_stats[robot.robot_name]["kick_hits"] += 1
+
+
+func _on_blocked(robot: Robot, _thrower: Robot) -> void:
+	stats["blocks"][robot.team] += 1
+	robot_stats[robot.robot_name]["blocks"] += 1
 
 
 func _on_knocked_down(_robot: Robot, by: Robot, _source: String) -> void:

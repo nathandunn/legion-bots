@@ -20,6 +20,9 @@ const SAVE_PATH := "user://custom_slots.json"
 static var personas: Array = []
 ## [{"name": String, "props": {prop: float}}]
 static var builds: Array = []
+## [{"name": String, "squads": [{"class","type","persona","cells":[[col,row], ...]}]}] - whole
+## armies off the placement screen, the third kind of slot.
+static var armies: Array = []
 static var _loaded := false
 
 
@@ -77,6 +80,74 @@ static func resolve_build(n: String):
 static func _preset_build(n: String):
 	# Random and anything unknown go through the type's own preset(), which handles them
 	return RobotType.preset(n)
+
+
+static func army_names() -> Array:
+	var out: Array = []
+	for s in armies:
+		out.append(String(s["name"]))
+	return out
+
+
+static func army_slot(n: String) -> int:
+	for i in armies.size():
+		if String(armies[i]["name"]) == n:
+			return i
+	return -1
+
+
+## The squads of a saved army, ready for MatchManager (cells as Vector2).
+static func resolve_army(n: String) -> Array:
+	for s in armies:
+		if String(s["name"]) == n:
+			return _squads_to_runtime(s["squads"])
+	return []
+
+
+static func army_at(idx: int) -> Array:
+	if idx < 0 or idx >= armies.size():
+		return []
+	return _squads_to_runtime(armies[idx]["squads"])
+
+
+static func _squads_to_runtime(squads: Array) -> Array:
+	var out: Array = []
+	for sq in squads:
+		var ps: Array = []
+		for c in sq["cells"]:
+			ps.append(Vector2(float(c[0]), float(c[1])))
+		out.append({"class": String(sq["class"]), "type": String(sq["type"]),
+			"persona": String(sq["persona"]), "positions": ps})
+	return out
+
+
+## Store a whole army in slot `idx`. `squads` is the manager's runtime form; a blank name
+## clears the slot, exactly as it does for the other two kinds.
+static func set_army(idx: int, slot_name: String, squads: Array) -> void:
+	slot_name = slot_name.strip_edges()
+	while armies.size() <= idx and armies.size() < MAX_SLOTS:
+		armies.append({"name": "", "squads": []})
+	if idx < 0 or idx >= armies.size():
+		return
+	if slot_name == "":
+		armies.remove_at(idx)
+		save()
+		return
+	var stored: Array = []
+	for sq in squads:
+		var cells: Array = []
+		for c in sq["positions"]:
+			cells.append([int(Vector2(c).x), int(Vector2(c).y)])
+		stored.append({"class": String(sq["class"]), "type": String(sq["type"]),
+			"persona": String(sq["persona"]), "cells": cells})
+	armies[idx] = {"name": _unique(slot_name, army_names(), idx), "squads": stored}
+	save()
+
+
+static func clear_army(idx: int) -> void:
+	if idx >= 0 and idx < armies.size():
+		armies.remove_at(idx)
+		save()
 
 
 static func persona_names() -> Array:
@@ -188,6 +259,7 @@ static func load_slots() -> void:
 		return
 	personas = _clean(parsed.get("personas", []), "traits", Personality.TRAITS)
 	builds = _clean(parsed.get("builds", []), "props", build_props())
+	armies = _clean_armies(parsed.get("armies", []))
 
 
 ## Never trust what came off disk: an older version, a hand-edited file or a half-written save
@@ -212,9 +284,60 @@ static func _clean(raw, key: String, fields: Array) -> Array:
 	return out
 
 
+## Armies are a good deal more structure than a bag of floats, so every field is checked on
+## the way in: a class that no longer exists, a cell off the grid, a squad that is not a
+## dictionary, an army over the unit cap - any of them costs that slot and nothing else.
+static func _clean_armies(raw) -> Array:
+	var out: Array = []
+	if typeof(raw) != TYPE_ARRAY:
+		return out
+	for entry in raw:
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var nm := String(entry.get("name", "")).strip_edges()
+		if nm == "" or out.size() >= MAX_SLOTS:
+			continue
+		var raw_squads = entry.get("squads", [])
+		if typeof(raw_squads) != TYPE_ARRAY:
+			continue
+		var squads: Array = []
+		var units := 0
+		var seen := {}
+		for sq in raw_squads:
+			if typeof(sq) != TYPE_DICTIONARY:
+				continue
+			var cid := String(sq.get("class", "")).strip_edges().to_lower()
+			if not UnitClass.is_known(cid) or seen.has(cid):
+				continue
+			var raw_cells = sq.get("cells", [])
+			if typeof(raw_cells) != TYPE_ARRAY:
+				continue
+			var cells: Array = []
+			for c in raw_cells:
+				if typeof(c) != TYPE_ARRAY or (c as Array).size() < 2:
+					continue
+				var col := int(c[0])
+				var row := int(c[1])
+				if not MatchManager.cell_in_grid(Vector2(col, row)):
+					continue
+				if units >= MatchManager.MAX_SIZE:
+					break
+				cells.append([col, row])
+				units += 1
+			if cells.is_empty():
+				continue
+			seen[cid] = true
+			squads.append({"class": cid, "type": String(sq.get("type", "Even")),
+				"persona": String(sq.get("persona", "Balanced")), "cells": cells})
+		if squads.is_empty():
+			continue
+		out.append({"name": nm, "squads": squads})
+	return out
+
+
 static func save() -> void:
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
 		return
-	f.store_string(JSON.stringify({"personas": personas, "builds": builds}))
+	f.store_string(JSON.stringify({"personas": personas, "builds": builds, "armies": armies}))
 	f.close()
