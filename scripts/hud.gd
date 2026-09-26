@@ -6,6 +6,7 @@ const MAX_PICKERS := 10   # per-robot pickers shown; the rest follow the team
 ## Lays itself out for phone widths too (rows wrap, overlays shrink to the screen).
 
 signal new_match_requested
+signal armies_requested
 signal batch_requested(n: int)
 signal speed_changed(scale: float)
 signal pause_toggled(paused: bool)
@@ -17,7 +18,7 @@ const TYPE_LIST := ["Even", "Bruiser", "Runner", "Tank", "Sniper", "Ghost", "Ran
 
 ## The lists the pickers actually offer: the shipped presets, then the slots you filled in
 ## yourself. "Custom" is the label the sliders fall back to and is never an option to choose.
-func _roster(is_type: bool) -> Array:
+static func _roster(is_type: bool) -> Array:
 	var out: Array = []
 	for n in (TYPE_LIST if is_type else PRESET_LIST):
 		if n != "Custom":
@@ -27,7 +28,7 @@ func _roster(is_type: bool) -> Array:
 
 
 ## A badge for any name in any roster, custom slots included.
-func _icon_for(n: String, is_type: bool) -> Texture2D:
+static func _icon_for(n: String, is_type: bool) -> Texture2D:
 	var slot := CustomSlots.build_slot(n) if is_type else CustomSlots.persona_slot(n)
 	if slot >= 0:
 		return Icons.custom_icon(slot, is_type)
@@ -134,6 +135,11 @@ func setup(m: MatchManager) -> void:
 	teams_btn.toggle_mode = true
 	teams_btn.toggled.connect(func(on: bool): teams_overlay.visible = on; if on: results_overlay.visible = false)
 	row2.add_child(teams_btn)
+	var armies_btn := Button.new()
+	armies_btn.text = "Armies"
+	armies_btn.tooltip_text = "Build an army: a gold budget, three classes, place them on your half"
+	armies_btn.pressed.connect(func(): _close_overlays(); armies_requested.emit())
+	row2.add_child(armies_btn)
 	live_btn = Button.new()
 	live_btn.text = "Live list"
 	live_btn.toggle_mode = true
@@ -631,7 +637,7 @@ func _refresh_slot_editor(is_type: bool) -> void:
 		note.text = "%d of %d slots used" % [saved.size(), CustomSlots.MAX_SLOTS]
 
 
-func _mini_label(text: String) -> Label:
+static func _mini_label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", 13)
@@ -741,7 +747,7 @@ func _key_button() -> Button:
 
 
 ## One line of plain English per entry - the same words the tooltip and the key both use.
-func _describe(n: String, is_type: bool) -> String:
+static func _describe(n: String, is_type: bool) -> String:
 	var slot := CustomSlots.build_slot(n) if is_type else CustomSlots.persona_slot(n)
 	if slot >= 0:
 		return "%s\nYour own %s, slot %d" % [n, "type" if is_type else "personality", slot + 1]
@@ -776,8 +782,8 @@ func _on_pick(t: int, idx: int, is_type: bool, name_picked: String) -> void:
 func _refresh_pickers() -> void:
 	for t in 2:
 		var tp: String = manager.team_preset_names[t]
-		var tb: String = manager.team_build_names[t]
-		for i in mini(MatchManager.TEAM_SIZE, MAX_PICKERS):
+		var tb: String = manager.team_type_names[t]
+		for i in mini(mini(MatchManager.TEAM_SIZE, MAX_PICKERS), pp_btns[t].size()):
 			var who := "%s%d" % [MatchManager.TEAM_NAMES[t][0], i + 1]
 			var pn: String = String(manager.player_persona[t][i])
 			var pb: Button = pp_btns[t][i]
@@ -808,9 +814,13 @@ func _build_results_overlay() -> void:
 	q.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	next_row.add_child(q)
 	var same := Button.new()
-	same.text = "Yes - same teams"
+	same.text = "Same armies again"
 	same.pressed.connect(func(): _close_overlays(); new_match_requested.emit())
 	next_row.add_child(same)
+	var edit := Button.new()
+	edit.text = "Edit armies"
+	edit.pressed.connect(func(): _close_overlays(); armies_requested.emit())
+	next_row.add_child(edit)
 	var change := Button.new()
 	change.text = "Change teams first"
 	change.pressed.connect(func(): results_overlay.visible = false; teams_btn.button_pressed = true)
@@ -938,7 +948,7 @@ func _process(delta: float) -> void:
 	var tl := manager.elapsed
 	timer_label.text = "%d:%02d" % [int(tl) / 60, int(tl) % 60]
 	for t in 2:
-		team_labels[t].text = "%s %d/%d  HP %d%%" % [MatchManager.TEAM_NAMES[t], manager.alive_count(t), MatchManager.TEAM_SIZE,
+		team_labels[t].text = "%s %d/%d  HP %d%%" % [MatchManager.TEAM_NAMES[t], manager.alive_count(t), maxi(int(manager.team_count[t]), 1),
 			int(round(100.0 * manager.team_hp(t) / manager.team_max_hp(t)))]
 	if live_label.visible:
 		var lines := PackedStringArray()
@@ -965,7 +975,7 @@ func _clear_results() -> void:
 			c.queue_free()
 
 
-func _cell(text: String, bold := false, color := Color.WHITE, size := 14) -> Label:
+static func _cell(text: String, bold := false, color := Color.WHITE, size := 14) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", size)
@@ -1004,9 +1014,14 @@ func show_result(res: Dictionary) -> void:
 	results_box.add_child(grid)
 	grid.add_child(_cell(""))
 	for t in 2:
-		grid.add_child(_cell("%s (%s)" % [MatchManager.TEAM_NAMES[t], res["presets"][t]], true, MatchManager.TEAM_COLORS[t].lightened(0.2), 15))
+		var what: String = String(res.get("army_labels", ["", ""])[t]) if bool(res.get("from_army", [false, false])[t]) else String(res["presets"][t])
+		grid.add_child(_cell("%s (%s)" % [MatchManager.TEAM_NAMES[t], what], true, MatchManager.TEAM_COLORS[t].lightened(0.2), 15))
 	var rows := [
-		["Alive", func(t): return "%d / %d" % [res["alive"][t], MatchManager.TEAM_SIZE]],
+		["Alive", func(t): return "%d / %d" % [res["alive"][t], int(res.get("counts", [0, 0])[t])]],
+		["Gold spent", func(t): return "%d of %s" % [int(res.get("gold_spent", [0, 0])[t]),
+			"no limit" if bool(res.get("sandbox", false)) else str(int(res.get("budget", MatchManager.GOLD_BUDGET)))] \
+			if bool(res.get("from_army", [false, false])[t]) else "%d (quick battle)" % int(res.get("gold_spent", [0, 0])[t])],
+		["Gold left standing", func(t): return "%d" % int(res.get("gold_standing", [0, 0])[t])],
 		["Team HP left", func(t): return "%d%%" % int(round(100.0 * res["hp"][t] / maxf(float(res.get("max_hp", [1.0, 1.0])[t]), 1.0)))],
 		["Throws / hits", func(t): return "%d / %d  (%s)" % [s["throws"][t], s["rock_hits"][t], _pct(s["rock_hits"][t], s["throws"][t])]],
 		["Punches / hits", func(t): return "%d / %d  (%s)" % [s["punches"][t], s["punch_hits"][t], _pct(s["punch_hits"][t], s["punches"][t])]],
@@ -1015,6 +1030,7 @@ func show_result(res: Dictionary) -> void:
 		["Punch damage", func(t): return "%d" % int(s["damage"][t]["punch"])],
 		["Kick damage", func(t): return "%d" % int(s["damage"][t].get("kick", 0.0))],
 		["Knockdowns dealt", func(t): return "%d" % s["knockdowns"][t]],
+		["Rocks blocked on a shield", func(t): return "%d" % int(s.get("blocks", [0, 0])[t])],
 		["Kills (enemy dead)", func(t): return "%d" % s["kills"][t]],
 		["Friendly-fire damage", func(t): return "%d" % int(s["friendly_fire"][t])],
 		["Own goals (killed a mate)", func(t): return "%d" % int(s.get("own_goals", [0, 0])[t])],
@@ -1034,15 +1050,16 @@ func show_result(res: Dictionary) -> void:
 	# per-robot table
 	results_box.add_child(_cell("Robots", true, Color.WHITE, 16))
 	var rg := GridContainer.new()
-	rg.columns = 12
+	rg.columns = 13
 	rg.add_theme_constant_override("h_separation", 14)
 	rg.add_theme_constant_override("v_separation", 2)
 	results_box.add_child(rg)
-	for hdr in ["Robot", "Type", "Personality", "Damage", "Rock", "Punch", "Kick", "Throw acc", "Punch acc", "Kick acc", "KD", "Kills / HP"]:
+	for hdr in ["Robot", "Class", "Type", "Personality", "Damage", "Rock", "Punch", "Kick", "Throw acc", "Punch acc", "Kick acc", "KD", "Kills / HP"]:
 		rg.add_child(_cell(hdr, false, Color(0.75, 0.75, 0.8), 13))
 	for r in res["robots"]:
 		var col: Color = MatchManager.TEAM_COLORS[r["team"]].lightened(0.25)
 		rg.add_child(_cell(r["name"], true, col))
+		rg.add_child(_cell(String(r.get("class", "Mixed"))))
 		rg.add_child(_cell(String(r.get("type", "Even"))))
 		rg.add_child(_cell(r["preset"]))
 		rg.add_child(_cell("%d" % int(r["dmg_rock"] + r["dmg_punch"] + r.get("dmg_kick", 0.0))))

@@ -17,6 +17,9 @@ var _focus := Vector3(0, 1.0, 0)
 var _focus_target := Vector3(0, 1.0, 0)
 var _focus_dist := -1.0
 var _rest_dist := 27.0  # the zoom the user last chose; the view returns to it after a celebration
+# the army builder takes the rig over: straight down, no orbiting, no drift back
+var _overview := false
+var _saved := {}
 
 
 func _ready() -> void:
@@ -29,6 +32,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if _overview:
+		_apply()
+		return
 	idle += delta
 	if auto_orbit and idle > 6.0:
 		yaw += delta * 0.05
@@ -39,12 +45,46 @@ func _process(delta: float) -> void:
 	_apply()
 
 
+## The placement screen's view: straight down over the field, at the distance it asks for,
+## slid up the screen by `z_offset` metres so the bottom bar does not sit on the field.
+## The player's own yaw/pitch/zoom are put back when it hands the rig over again.
+func set_overview(on: bool, want_dist: float = 38.0, z_offset: float = 0.0) -> void:
+	if on:
+		if not _overview:
+			_saved = {"yaw": yaw, "pitch": pitch, "dist": dist, "rest": _rest_dist}
+		_overview = true
+		yaw = 0.0
+		pitch = 1.42
+		dist = want_dist
+		_rest_dist = want_dist
+		_focus = Vector3(0.0, 1.0, z_offset)
+		_focus_target = _focus
+		_focus_dist = -1.0
+		set_process_unhandled_input(false)
+	else:
+		if _overview and not _saved.is_empty():
+			yaw = float(_saved["yaw"])
+			pitch = float(_saved["pitch"])
+			dist = float(_saved["dist"])
+			_rest_dist = float(_saved["rest"])
+		_overview = false
+		_focus = Vector3(0, 1.0, 0)
+		_focus_target = _focus
+		_focus_dist = -1.0
+		set_process_unhandled_input(true)
+	_apply()
+
+
 func set_focus(point: Vector3, want_dist: float = -1.0) -> void:
+	if _overview:
+		return
 	_focus_target = Vector3(point.x, 1.0, point.z)
 	_focus_dist = want_dist
 
 
 func clear_focus() -> void:
+	if _overview:
+		return
 	_focus_target = Vector3(0, 1.0, 0)
 	_focus_dist = _rest_dist if absf(dist - _rest_dist) > 0.5 else -1.0
 
@@ -58,6 +98,8 @@ func _apply() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _overview:
+		return
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT:
 			_dragging = event.pressed
