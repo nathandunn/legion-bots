@@ -88,12 +88,23 @@ def write_costs(costs):
 
 
 def write_spans(spans):
+    """Rewrite the SPANS block ONLY. The class TABLE above it has entries keyed by the same
+    class names, and a substitution loose enough to find them silently replaced the whole class
+    table with span rows - which left every unit a default Mixed robot and the sim still printing
+    a SUMMARY, so 480 battles were measured against a game that no longer existed."""
     src = open(UNIT_GD).read()
+    m = re.search(r"(const SPANS := \{\n)(.*?)(\n\})", src, re.S)
+    if m is None:
+        raise RuntimeError("cannot find the SPANS block in %s" % UNIT_GD)
+    block = m.group(2)
     for cid, row in spans.items():
-        line = '"%s":%s {"curve": %.2f, %s},' % (
+        line = '\t"%s":%s {"curve": %.2f, %s},' % (
             cid, " " * (9 - len(cid)), row["curve"],
             ", ".join('"%s": %.2f' % (p, row[p]) for p in PROPS))
-        src = re.sub(r'"%s":\s*\{[^}]*\},' % cid, lambda m: line, src, count=1)
+        block, n = re.subn(r'\t"%s":\s*\{[^}]*\},' % cid, lambda _m: line, block, count=1)
+        if n != 1:
+            raise RuntimeError("no SPANS row for %s" % cid)
+    src = src[:m.start(2)] + block + src[m.end(2):]
     open(UNIT_GD, "w").write(src)
 
 
@@ -185,6 +196,13 @@ def run(red, blue, games, costs, spans, seed, cap=CAP, type_red=None, type_blue=
     out = subprocess.run(args, capture_output=True, text=True, timeout=7200).stdout
     _runs[0] += 1
     _runs[1] += time.time() - t0
+    # A broken script still prints a SUMMARY: Robot and UnitClass abort the failed call and
+    # carry on with default field values, so the batch completes and the numbers are fiction.
+    # Never measure that.
+    if "SCRIPT ERROR" in out:
+        bad = [l for l in out.splitlines() if "SCRIPT ERROR" in l]
+        raise RuntimeError("%d SCRIPT ERRORs in a calibration batch - refusing the numbers:\n%s"
+                           % (len(bad), "\n".join(bad[:5])))
     for line in out.splitlines():
         if line.startswith("SUMMARY "):
             return json.loads(line[8:])
@@ -350,6 +368,9 @@ def tune_costs(costs, spans, games, rounds, seed, power, write, history, ladder=
 
 # ---------------------------------------------------------------- the span loop
 
+GAIN_TRUST = 1.5   # most a single gain may move in one round
+CURVE_TRUST = 1.3  # most the curve may move in one round
+
 SPAN_COUNT = 8    # both sides, every class: the span loop is about the type, not the price
 SPAN_CAP = 45     # a mirror match (same class, same personality) stalemates far more often
                   # than a cross-class one, so it gets a tighter clock of its own
@@ -383,10 +404,16 @@ def tune_spans(classes, costs, spans, games, rounds, seed, step, write, history)
             save_state("spans", {"final": spans, "history": history})
             if r == rounds - 1:
                 break
+            # Trust regions. A property 50 points off asks for a 2.7x move under the raw rule,
+            # and that overshoots every time: the measured sensitivity is only 0.2-1.0 points of
+            # win rate per 1 % of gain, and sigma is 10 points, so most of a big deviation is
+            # noise plus a curve change it should not be credited with.
             row = dict(spans[cid])
-            row["curve"] = min(2.2, max(0.25, row["curve"] * step ** ((mean - 0.5) / 0.12)))
+            cm = min(CURVE_TRUST, max(1.0 / CURVE_TRUST, step ** ((mean - 0.5) / 0.12)))
+            row["curve"] = min(2.2, max(0.25, row["curve"] * cm))
             for p in PROPS:
-                row[p] = min(4.0, max(0.20, row[p] * step ** (-(res[p][0] - mean) / 0.15)))
+                gm_p = min(GAIN_TRUST, max(1.0 / GAIN_TRUST, step ** (-(res[p][0] - mean) / 0.15)))
+                row[p] = min(4.0, max(0.20, row[p] * gm_p))
             gm = math.exp(sum(math.log(row[p]) for p in PROPS) / len(PROPS))
             for p in PROPS:
                 row[p] = min(4.0, max(0.20, row[p] / gm))
